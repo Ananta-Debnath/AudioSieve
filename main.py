@@ -2,6 +2,7 @@ import os
 
 import stft
 import utils
+import drum_mask
 
 def main():
     # -------------------------
@@ -46,7 +47,7 @@ def main():
 
     # print(spectra.shape)
 
-    magnitude = stft.calculate_magnitude(
+    magnitude = utils.calculate_magnitude(
         spectra
     )
 
@@ -59,11 +60,57 @@ def main():
     )
 
     # -------------------------
+    # Apply mask
+    # -------------------------
+
+    mask = drum_mask.create_drum_mask_frequency_soft(
+        spectra,
+        threshold=2.5,
+        full_strength=4
+    )
+
+    mask = drum_mask.smooth_mask_frequency(
+        mask,
+        kernel_size=10
+    )
+
+    # mask = drum_mask.create_drum_mask_simple(
+    #     spectra,
+    #     threshold=3.0,
+    #     min_high_freq_ratio=0.25,
+    #     neighbour_radius=2
+    # )
+
+    utils.save_mask(
+        mask,
+        sample_rate,
+        hop_size,
+        "Spectograms/drum_mask.png"
+    )
+
+    masked_spectra = utils.apply_mask(
+        spectra,
+        mask
+    )
+
+    masked_magnitude = utils.calculate_magnitude(
+        masked_spectra
+    )
+
+    # Save spectrogram
+    utils.save_spectrogram(
+        masked_magnitude,
+        sample_rate,
+        hop_size,
+        "Spectograms/masked_spectrogram.png"
+    )
+
+    # -------------------------
     # Inverse process
     # -------------------------
 
     reconstructed_frames = stft.calculate_ifft(
-        spectra,
+        masked_spectra,
         frame_size
     )
 

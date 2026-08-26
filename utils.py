@@ -40,6 +40,11 @@ def save_audio(filename, sample_rate, audio):
     )
 
 
+def calculate_magnitude(spectra):
+    """Calculate magnitude of the frequency spectrum."""
+    return np.abs(spectra)
+
+
 def plot_spectrogram(magnitude, sample_rate, hop_size):
     """Display the STFT magnitude as a spectrogram."""
 

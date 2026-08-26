@@ -29,11 +29,6 @@ def calculate_fft(frames):
     return np.fft.rfft(frames, axis=1)
 
 
-def calculate_magnitude(spectra):
-    """Calculate magnitude of the frequency spectrum."""
-    return np.abs(spectra)
-
-
 def calculate_ifft(spectra, frame_size):
     """Convert frequency-domain frames back to time-domain frames."""
 
