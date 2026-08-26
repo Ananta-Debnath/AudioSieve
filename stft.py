@@ -1,7 +1,5 @@
 import numpy as np
 
-import utils
-
 
 def create_window(frame_size):
     """Create a Hann window."""
