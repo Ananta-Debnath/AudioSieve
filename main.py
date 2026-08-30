@@ -2,7 +2,8 @@ import os
 
 import stft
 import utils
-import drum_mask
+import drum_mask_gen
+import vocal_mask_gen
 
 def main():
     # -------------------------
@@ -12,12 +13,30 @@ def main():
         os.makedirs("Spectograms")
 
     input_file = "Audio/trimmed.wav"
+    drum_output_file = "Audio/drums.wav"
     output_file = "Audio/reconstructed.wav"
-    spectrogram_file = "Spectograms/spectrogram.png"
     duration = 10 # seconds
 
     frame_size = 1024
     hop_size = 512
+
+    def spectogram_filename(name=None):
+        if name:
+            return f"Spectograms/{name}_spectrogram.png"
+        else:
+            return "Spectograms/spectrogram.png"
+
+    def mask_filename(name=None):
+        if name:
+            return f"Spectograms/{name}_mask.png"
+        else:
+            return "Spectograms/mask.png"
+
+    def audio_filename(name=None):
+        if name:
+            return f"Audio/{name}.wav"
+        else:
+            return "Audio/reconstructed.wav"
 
     # -------------------------
     # Forward process
@@ -45,7 +64,7 @@ def main():
         windowed_frames
     )
 
-    # print(spectra.shape)
+    print(spectra.shape)
 
     magnitude = utils.calculate_magnitude(
         spectra
@@ -56,45 +75,77 @@ def main():
         magnitude,
         sample_rate,
         hop_size,
-        spectrogram_file
+        spectogram_filename("original")
     )
 
     # -------------------------
     # Apply mask
     # -------------------------
 
-    mask = drum_mask.create_drum_mask_frequency_soft(
+    # Drum
+    drum_mask = drum_mask_gen.create_drum_mask_frequency_soft(
         spectra,
-        threshold=2.5,
+        threshold=2,
         full_strength=4
     )
 
-    mask = drum_mask.smooth_mask_frequency(
-        mask,
-        kernel_size=10
-    )
-
-    # mask = drum_mask.create_drum_mask_simple(
-    #     spectra,
-    #     threshold=3.0,
-    #     min_high_freq_ratio=0.25,
-    #     neighbour_radius=2
-    # )
-
     utils.save_mask(
-        mask,
+        drum_mask,
         sample_rate,
         hop_size,
-        "Spectograms/drum_mask.png"
+        mask_filename("drum")
     )
 
-    masked_spectra = utils.apply_mask(
+    drum_spectra = utils.apply_mask(
         spectra,
-        mask
+        drum_mask
+    )
+
+    reconstructed = utils.apply_mask(
+        spectra,
+        1-drum_mask
     )
 
     masked_magnitude = utils.calculate_magnitude(
-        masked_spectra
+        drum_spectra
+    )
+
+    rest_magnitude = utils.calculate_magnitude(
+        reconstructed
+    )
+
+    # Vocal
+    n_fft = (spectra.shape[1] - 1) * 2
+
+    vocal_mask, f0_track = vocal_mask_gen.make_vocal_mask(
+        rest_magnitude,
+        sample_rate,
+        n_fft
+    )
+
+    utils.save_mask(
+        vocal_mask,
+        sample_rate,
+        hop_size,
+        mask_filename("vocal")
+    )
+
+    vocal_spectra = utils.apply_mask(
+        reconstructed,
+        vocal_mask
+    )
+
+    vocal_magnitude = utils.calculate_magnitude(
+        vocal_spectra
+    )
+
+    reconstructed = utils.apply_mask(
+        reconstructed,
+        1-vocal_mask
+    )
+
+    rest_magnitude = utils.calculate_magnitude(
+        reconstructed
     )
 
     # Save spectrogram
@@ -102,15 +153,51 @@ def main():
         masked_magnitude,
         sample_rate,
         hop_size,
-        "Spectograms/masked_spectrogram.png"
+        spectogram_filename("drum")
+    )
+
+    utils.save_spectrogram(
+        vocal_magnitude,
+        sample_rate,
+        hop_size,
+        spectogram_filename("vocal")
+    )
+
+    utils.save_spectrogram(
+        rest_magnitude,
+        sample_rate,
+        hop_size,
+        spectogram_filename("remaining")
     )
 
     # -------------------------
     # Inverse process
     # -------------------------
 
+    drum_frames = stft.calculate_ifft(
+        drum_spectra,
+        frame_size
+    )
+
+    drum_audio = stft.overlap_add(
+        drum_frames,
+        window,
+        hop_size
+    )
+
+    vocal_frames = stft.calculate_ifft(
+        vocal_spectra,
+        frame_size
+    )
+
+    vocal_audio = stft.overlap_add(
+        vocal_frames,
+        window,
+        hop_size
+    )
+
     reconstructed_frames = stft.calculate_ifft(
-        masked_spectra,
+        reconstructed,
         frame_size
     )
 
@@ -125,7 +212,20 @@ def main():
     # -------------------------
 
     utils.save_audio(
-        output_file,
+        audio_filename("drum"),
+        sample_rate,
+        drum_audio
+    )
+
+    utils.save_audio(
+        audio_filename("vocal"),
+        sample_rate,
+        vocal_audio
+    )
+    
+
+    utils.save_audio(
+        audio_filename("remaining"),
         sample_rate,
         reconstructed_audio
     )
@@ -133,7 +233,7 @@ def main():
     print("Done!")
     print("Original:", input_file)
     print("Reconstructed:", output_file)
-    print("Spectrogram:", spectrogram_file)
+    print("Spectrogram:", spectogram_filename())
 
 
 if __name__ == "__main__":
