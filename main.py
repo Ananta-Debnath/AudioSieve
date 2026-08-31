@@ -47,21 +47,10 @@ def main():
         duration=duration
     )
 
-    window = stft.create_window(frame_size)
-
-    frames = stft.get_frames(
+    spectra = stft.calculatr_stft(
         audio,
         frame_size,
         hop_size
-    )
-
-    windowed_frames = stft.apply_window(
-        frames,
-        window
-    )
-
-    spectra = stft.calculate_fft(
-        windowed_frames
     )
 
     print(spectra.shape)
@@ -174,36 +163,21 @@ def main():
     # Inverse process
     # -------------------------
 
-    drum_frames = stft.calculate_ifft(
+    drum_audio = stft.calculate_istft(
         drum_spectra,
-        frame_size
-    )
-
-    drum_audio = stft.overlap_add(
-        drum_frames,
-        window,
+        frame_size,
         hop_size
     )
 
-    vocal_frames = stft.calculate_ifft(
+    vocal_audio = stft.calculate_istft(
         vocal_spectra,
-        frame_size
-    )
-
-    vocal_audio = stft.overlap_add(
-        vocal_frames,
-        window,
+        frame_size,
         hop_size
     )
 
-    reconstructed_frames = stft.calculate_ifft(
+    reconstructed_audio = stft.calculate_istft(
         reconstructed,
-        frame_size
-    )
-
-    reconstructed_audio = stft.overlap_add(
-        reconstructed_frames,
-        window,
+        frame_size,
         hop_size
     )
 

@@ -27,6 +27,27 @@ def calculate_fft(frames):
     return np.fft.rfft(frames, axis=1)
 
 
+def calculatr_stft(audio, frame_size, hop_size):
+    window = create_window(frame_size)
+    
+    frames = get_frames(
+        audio,
+        frame_size,
+        hop_size
+    )
+
+    windowed_frames = apply_window(
+        frames,
+        window
+    )
+
+    spectra = calculate_fft(
+        windowed_frames
+    )
+
+    return spectra
+
+
 def calculate_ifft(spectra, frame_size):
     """Convert frequency-domain frames back to time-domain frames."""
 
@@ -71,3 +92,20 @@ def overlap_add(frames, window, hop_size):
     output /= window_sum
 
     return output
+
+
+def calculate_istft(reconstructed, frame_size, hop_size):
+    window = create_window(frame_size)
+
+    reconstructed_frames = calculate_ifft(
+        reconstructed,
+        frame_size
+    )
+
+    reconstructed_audio = overlap_add(
+        reconstructed_frames,
+        window,
+        hop_size
+    )
+
+    return reconstructed_audio
