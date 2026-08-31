@@ -27,7 +27,7 @@ def calculate_fft(frames):
     return np.fft.rfft(frames, axis=1)
 
 
-def calculatr_stft(audio, frame_size, hop_size):
+def calculatr_stft(audio, frame_size=1024, hop_size=512):
     window = create_window(frame_size)
     
     frames = get_frames(
@@ -94,7 +94,7 @@ def overlap_add(frames, window, hop_size):
     return output
 
 
-def calculate_istft(reconstructed, frame_size, hop_size):
+def calculate_istft(reconstructed, frame_size=1024, hop_size=512):
     window = create_window(frame_size)
 
     reconstructed_frames = calculate_ifft(
