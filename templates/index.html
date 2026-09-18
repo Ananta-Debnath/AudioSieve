@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AudioSieve Audio Lab</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <h1>AudioSieve Audio Lab</h1>
+
+  <nav class="tabs">
+    <button type="button" data-tab="separate" class="active">Separation</button>
+    <button type="button" data-tab="eq">EQ + Filter</button>
+    <button type="button" data-tab="reverb">Reverb</button>
+    <button type="button" data-tab="echo">Echo + Delay</button>
+  </nav>
+
+  {% for tool, title in [("separate", "Separation"), ("eq", "EQ + Filter"),
+                         ("reverb", "Reverb"), ("echo", "Echo + Delay")] %}
+  <section class="panel" id="panel-{{ tool }}" {% if not loop.first %}hidden{% endif %}>
+    <h2>{{ title }}</h2>
+    <form data-tool="{{ tool }}">
+      <input type="file" name="file" accept=".wav,.mp3,.flac" required>
+      <button type="submit">Process</button>
+    </form>
+    <p class="status"></p>
+    <div class="result" hidden>
+      <audio controls></audio>
+      <a class="download">Download</a>
+    </div>
+  </section>
+  {% endfor %}
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

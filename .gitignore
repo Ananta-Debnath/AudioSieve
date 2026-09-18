@@ -3,3 +3,7 @@ __pycache__
 Audio
 Spectograms
 tempCodeRunnerFile.py
+
+# Flask app runtime files
+uploads/
+processed/
