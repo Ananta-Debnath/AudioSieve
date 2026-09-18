@@ -3,5 +3,8 @@ body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; 
 .tabs button { padding: 0.5rem 1rem; border: 1px solid #ccc; border-bottom: none; background: #f4f4f4; cursor: pointer; }
 .tabs button.active { background: #fff; font-weight: bold; }
 .panel { padding: 1rem 0; }
+fieldset { margin: 0.75rem 0; }
+fieldset label { display: block; margin: 0.25rem 0; }
 .status.error { color: #b00020; }
-.result audio { display: block; width: 100%; margin-bottom: 0.5rem; }
+.result canvas, .result img { display: block; max-width: 100%; height: auto; border: 1px solid #ddd; }
+.original audio, .result audio { display: block; width: 100%; margin-bottom: 0.5rem; }

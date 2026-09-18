@@ -22,16 +22,73 @@
     <h2>{{ title }}</h2>
     <form data-tool="{{ tool }}">
       <input type="file" name="file" accept=".wav,.mp3,.flac" required>
+      <div class="original" hidden>
+        <h3>Original</h3>
+        <audio class="audio-original" controls></audio>
+      </div>
+      {% if tool == "eq" %}
+      <fieldset>
+        <legend>Preset</legend>
+        <label>Preset (fills in the settings below; editing any of them switches back to none)
+          <select name="preset">
+            <option value="">(none, use settings below)</option>
+            {% for name in eq_presets %}
+            <option value="{{ name }}">{{ name.replace("_", " ") }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Mode</legend>
+        <label><input type="radio" name="mode" value="eq" checked> EQ</label>
+        <label><input type="radio" name="mode" value="filter"> Filter</label>
+        <label><input type="radio" name="mode" value="both"> EQ + Filter</label>
+      </fieldset>
+      <fieldset>
+        <legend>EQ band gains (dB, -{{ eq_max_gain }} to {{ eq_max_gain }})</legend>
+        {% for band in eq_bands %}
+        <label>{{ band.name }} ({{ band.center }} Hz{% if band.type != "peak" %}, {{ band.type.replace("shelf", " shelf") }}{% endif %})
+          <input type="number" name="band_{{ loop.index0 }}_gain_db" value="0"
+                 min="-{{ eq_max_gain }}" max="{{ eq_max_gain }}" step="0.5">
+        </label>
+        {% endfor %}
+      </fieldset>
+      <fieldset>
+        <legend>Filter</legend>
+        <label>Type
+          <select name="filter_type">
+            <option value="lowpass">Low-pass</option>
+            <option value="highpass">High-pass</option>
+            <option value="bandpass">Band-pass</option>
+            <option value="bandstop">Band-stop (notch)</option>
+          </select>
+        </label>
+        <label>Cutoff (Hz, low/high-pass) <input type="number" name="cutoff" value="4000" min="1"></label>
+        <label>Low cutoff (Hz, band-pass/stop) <input type="number" name="low_cutoff" value="300" min="1"></label>
+        <label>High cutoff (Hz, band-pass/stop) <input type="number" name="high_cutoff" value="3000" min="1"></label>
+        <label>Order <input type="number" name="order" value="4" min="1" max="12"></label>
+      </fieldset>
+      {% endif %}
       <button type="submit">Process</button>
     </form>
     <p class="status"></p>
     <div class="result" hidden>
-      <audio controls></audio>
+      <h3>Processed</h3>
+      <audio class="audio-processed" controls></audio>
       <a class="download">Download</a>
+      {% if tool == "eq" %}
+      <h3>Gain curve</h3>
+      <canvas class="curve" width="680" height="260"></canvas>
+      <h3>Spectrogram before</h3>
+      <img class="spec-before" alt="Spectrogram before processing">
+      <h3>Spectrogram after</h3>
+      <img class="spec-after" alt="Spectrogram after processing">
+      {% endif %}
     </div>
   </section>
   {% endfor %}
 
+  <script id="eq-presets" type="application/json">{{ eq_presets | tojson }}</script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
