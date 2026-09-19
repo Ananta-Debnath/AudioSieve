@@ -12,17 +12,16 @@ def main():
     # -------------------------
     # Configuration
     # -------------------------
-    if not os.path.exists("Spectograms"):
-        os.makedirs("Spectograms")
-
-    if not os.path.exists("Audio"):
-        os.makedirs("Audio")
-
-    if not os.path.exists("Spectograms/nmf"):
-        os.makedirs("Spectograms/nmf")
-
-    if not os.path.exists("Audio/nmf"):
-        os.makedirs("Audio/nmf")
+    def make_dir(directory):
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+            
+    make_dir("Spectograms")
+    make_dir("Audio")
+    make_dir("Spectograms/nmf")
+    make_dir("Audio/nmf")
+    make_dir("NMF")
+    make_dir("Audio/NMF/groups")
 
     input_file = "Audio/trimmed.wav"
     output_file = "Audio/reconstructed.wav"
@@ -118,6 +117,11 @@ def main():
         H,
         sample_rate=44100,
         n_fft=1024
+    )
+
+    similarity_df = nmf.make_similarity_matrix(
+        df,
+        "NMF/component_similarity.csv"
     )
 
     # nmf.rank_nmf_components(df)
@@ -255,6 +259,60 @@ def main():
     print("Original:", input_file)
     print("Reconstructed:", output_file)
     print("Spectrogram:", spectogram_filename())
+
+
+    groups = [
+        [0, 1, 2, 4, 8],
+        [3, 7, 10, 13, 19],
+        [5, 6, 17],
+        [9, 12, 16, 18, 20, 21, 22, 27, 29],
+        [11, 24],
+        [14, 23, 25],
+        [26, 28]
+    ]
+
+    for group_index, group in enumerate(groups):
+
+        group_mask = np.maximum.reduce([
+            masks[i]
+            for i in group
+        ])
+
+        group_spectra = spectra * group_mask
+
+        audio = stft.calculate_istft(group_spectra)
+
+        utils.save_audio(
+            audio_filename(f"NMF/groups/group_{group_index}"),
+            sample_rate,
+            audio
+        )
+
+    comps = [9, 10, 11, 21, 22]
+    custom_spectra = nmf_sep.get_custom_spectra(
+        W, H,
+        spectra,
+        comps
+    )
+
+    utils.save_spectrogram(
+        utils.calculate_magnitude(custom_spectra),
+        sample_rate,
+        hop_size,
+        spectogram_filename("custom")
+    )
+
+    custom_audio = stft.calculate_istft(
+        custom_spectra,
+        frame_size,
+        hop_size
+    )
+
+    utils.save_audio(
+        audio_filename("custom"),
+        sample_rate,
+        custom_audio
+    )
 
 
 if __name__ == "__main__":

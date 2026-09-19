@@ -4,6 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.decomposition import NMF
 from scipy.signal import find_peaks
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def calculate_nmf(spectra, n_components=10, max_iter=500):
@@ -96,7 +98,7 @@ def save_nmf_visualizations(W, H, sample_rate, n_fft, output_dir="nmf"):
         W.shape[0]
     )
 
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(16, 7))
 
     for k in range(n_components):
         plt.plot(
@@ -108,16 +110,87 @@ def save_nmf_visualizations(W, H, sample_rate, n_fft, output_dir="nmf"):
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Activation")
     plt.title("NMF Frequency Profiles (W)")
-    plt.legend()
+
+    plt.legend(
+        bbox_to_anchor=(1.02, 1),
+        loc="upper left",
+        fontsize=8
+    )
 
     plt.tight_layout()
 
     plt.savefig(
         os.path.join(output_dir, "W_frequency_profiles.png"),
-        dpi=150
+        dpi=150,
+        bbox_inches="tight"
     )
 
     plt.close()
+
+    # --------------------------------------------------
+    # W: Individual component plots
+    # --------------------------------------------------
+
+    individual_dir = os.path.join(output_dir, "W_indiv")
+    os.makedirs(individual_dir, exist_ok=True)
+
+    for k in range(n_components):
+
+        plt.figure(figsize=(12, 6))
+
+        plt.plot(
+            frequencies,
+            W[:, k]
+        )
+
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Activation")
+        plt.title(f"NMF Frequency Profile - Component {k}")
+
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(
+                individual_dir,
+                f"component_{k:02d}.png"
+            ),
+            dpi=150
+        )
+
+        plt.close()
+
+    # --------------------------------------------------
+    # W: Individual component plots
+    # --------------------------------------------------
+
+    individual_dir = os.path.join(output_dir, "W_log_indiv")
+    os.makedirs(individual_dir, exist_ok=True)
+
+    for k in range(n_components):
+
+        plt.figure(figsize=(12, 6))
+
+        plt.plot(
+            frequencies,
+            W[:, k]
+        )
+
+        plt.xlabel("Frequency (Hz)")
+        plt.xscale("symlog", linthresh=1000)
+        plt.ylabel("Activation")
+        plt.title(f"NMF Frequency Profile - Component {k}")
+
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(
+                individual_dir,
+                f"component_{k:02d}.png"
+            ),
+            dpi=150
+        )
+
+        plt.close()
 
 
     # --------------------------------------------------
@@ -147,10 +220,48 @@ def save_nmf_visualizations(W, H, sample_rate, n_fft, output_dir="nmf"):
 
     plt.close()
 
+    # --------------------------------------------------
+    # H: Individual component plots
+    # --------------------------------------------------
+
+    individual_dir = os.path.join(output_dir, "H_indiv")
+    os.makedirs(individual_dir, exist_ok=True)
+
+    for k in range(n_components):
+        plt.figure(figsize=(12, 6))
+
+        # Assuming 'times' is your time array and H is shape (n_components, n_frames)
+        plt.plot(
+            range(H.shape[1]),  # Time frames
+            H[k, :] 
+        )
+
+        plt.xlabel("Time Frame")
+        # Changed y-label to reflect what the y-axis actually represents (magnitude/amplitude)
+        plt.ylabel("Activation Amplitude") 
+        
+        # Added the 'f' prefix here
+        plt.title(f"NMF Time Activations (H) - Component {k}")
+
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(
+                individual_dir,
+                f"component_{k:02d}.png"
+            ),
+            dpi=150
+        )
+
+        plt.close()
+
 
     # --------------------------------------------------
     # Individual components
     # --------------------------------------------------
+
+    individual_dir = os.path.join(output_dir, "V_indiv")
+    os.makedirs(individual_dir, exist_ok=True)
 
     for k in range(n_components):
 
@@ -178,7 +289,7 @@ def save_nmf_visualizations(W, H, sample_rate, n_fft, output_dir="nmf"):
 
         plt.savefig(
             os.path.join(
-                output_dir,
+                individual_dir,
                 f"component_{k:02d}.png"
             ),
             dpi=150
@@ -603,7 +714,8 @@ def save_nmf_analysis(df, output_file="Spectograms/nmf_component_analysis.csv"):
 
     df.to_csv(
         output_file,
-        index=False
+        index=False,
+        float_format='%.7f'
     )
 
     print(
@@ -676,3 +788,126 @@ def calculate_rhythmicity(activation):
     )
 
     return float(np.clip(score, 0.0, 1.0))
+
+
+def make_similarity_matrix(component_features, output_file):
+    """
+    component_features:
+        List of dictionaries, one dictionary per NMF component.
+
+        Example:
+        [
+            {
+                "low_freq_energy": ...,
+                "mid_freq_energy": ...,
+                "high_freq_energy": ...,
+                "spectral_centroid": ...,
+                "spectral_bandwidth": ...,
+                "transientness": ...,
+                "harmonicity": ...,
+                "sparsity": ...,
+                "rhythmicity": ...,
+                "temporal_variance": ...
+            },
+            ...
+        ]
+
+    output_file:
+        CSV file to save the similarity matrix.
+    """
+
+    # ---------------------------------------------------------
+    # 1. Convert feature dictionaries into a DataFrame
+    # ---------------------------------------------------------
+
+    # df = pd.DataFrame(component_features)
+    df = component_features
+
+    # Keep the component IDs separate
+    # feature_names = [
+    #     "low_freq_energy",
+    #     "mid_freq_energy",
+    #     "high_freq_energy",
+    #     "spectral_centroid",
+    #     "spectral_bandwidth",
+    #     "transientness",
+    #     "harmonicity",
+    #     "sparsity",
+    #     "rhythmicity",
+    #     "temporal_variance",
+    # ]
+
+    feature_names = df.columns.tolist()
+
+    # Make sure all requested features exist
+    missing = [f for f in feature_names if f not in df.columns]
+
+    if missing:
+        raise ValueError(
+            f"Missing features: {missing}"
+        )
+
+    X = df[feature_names].astype(float).values
+
+    # ---------------------------------------------------------
+    # 2. Handle invalid values
+    # ---------------------------------------------------------
+
+    X = np.nan_to_num(
+        X,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0
+    )
+
+    # ---------------------------------------------------------
+    # 3. Normalize features
+    #
+    # This prevents something like spectral_centroid
+    # dominating just because its numerical scale is larger.
+    # ---------------------------------------------------------
+
+    scaler = StandardScaler()
+    X_normalized = scaler.fit_transform(X)
+
+    # ---------------------------------------------------------
+    # 4. Calculate feature-based similarity
+    #
+    # Cosine similarity ranges from -1 to +1 after
+    # standardization.
+    # Convert it to 0-1.
+    # ---------------------------------------------------------
+
+    similarity = cosine_similarity(X_normalized)
+
+    similarity = (similarity + 1.0) / 2.0
+
+    # Numerical safety
+    similarity = np.clip(similarity, 0.0, 1.0)
+
+    # ---------------------------------------------------------
+    # 5. Component IDs
+    # ---------------------------------------------------------
+
+    component_ids = [
+        f"component_{i}"
+        for i in range(len(component_features))
+    ]
+
+    similarity_df = pd.DataFrame(
+        similarity,
+        index=component_ids,
+        columns=component_ids
+    )
+
+    # ---------------------------------------------------------
+    # 6. Save
+    # ---------------------------------------------------------
+
+    similarity_df.to_csv(output_file)
+
+    print(
+        f"Similarity matrix saved to: {output_file}"
+    )
+
+    return similarity_df

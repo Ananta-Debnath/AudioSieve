@@ -74,7 +74,7 @@ def rank_bass_components(df):
     return df
 
 
-def get_bass_spectogram(df, W, H, spectra, nmf_mag, top_n=3, print_info=False):
+def get_bass_mask(df, W, H, spectra, nmf_mag, top_n=3, print_info=False):
     df = df.copy()
     df = df.sort_values(
         "bass_score",
@@ -109,7 +109,7 @@ def get_bass_spectogram(df, W, H, spectra, nmf_mag, top_n=3, print_info=False):
         print(f"magnitude.max(): {magnitude.max()}")
         print(f"bass_mag > mag (mean): {np.mean(bass_magnitude > magnitude)}")
 
-    return bass_spectra
+    return bass_mask
 
 
 def calculate_drum_score(df):
@@ -174,7 +174,7 @@ def calculate_drum_score(df):
     return df
 
 
-def get_drum_spectogram(df, W, H, spectra, nmf_mag, top_n=5, print_info=False):
+def get_drum_mask(df, W, H, spectra, nmf_mag, top_n=5, print_info=False):
 
     df = df.copy()
     df = df.sort_values(
@@ -244,4 +244,53 @@ def get_drum_spectogram(df, W, H, spectra, nmf_mag, top_n=5, print_info=False):
         ))
         print("---------------------------------------------------------")
 
-    return drum_spectra
+    return drum_mask
+
+
+def get_rest_mask(mask_dict):
+    # Initialize rest_mask as an array of ones with the same shape as the first mask
+    first_key = next(iter(mask_dict))
+    rest_mask = np.ones_like(mask_dict[first_key])
+
+    mask_sum = np.zeros_like(rest_mask)
+    for mask in mask_dict.values():
+        mask_sum += mask
+    
+    # Identify indices where the mask sum exceeds 1
+    over_one = mask_sum > 1
+    
+    # Scale all masks in the dictionary at those specific indices so they sum to 1
+    for key in mask_dict:
+        mask_dict[key][over_one] /= mask_sum[over_one]
+        
+    # Subtract the original mask_sum from rest_mask (which started as 1s).
+    # If the sum was > 1, it will become negative, which the clip below will handle.
+    rest_mask -= mask_sum
+
+    # Ensure that rest_mask values are clipped between 0 and 1
+    rest_mask = np.clip(rest_mask, 0, 1)
+
+    return rest_mask
+
+
+def get_custom_spectra(W, H, spectra, comps, power=2):
+    # Wiener-style soft mask for selected components
+    magnitude = sum(
+        np.outer(W[:, k], H[k, :])
+        for k in comps
+    )
+
+    magnitude = magnitude.T
+
+    eps = 1e-10
+
+    comp_power = magnitude ** power
+    total_power = np.abs(spectra) ** int(power)
+
+    mask = comp_power / (total_power + eps)
+
+    mask = np.clip(mask, 0, 1)
+
+    spectra = spectra * mask
+
+    return spectra
