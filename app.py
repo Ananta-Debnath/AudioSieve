@@ -30,6 +30,10 @@ ALLOWED_EXTENSIONS = {"wav", "mp3", "flac"}
 MAX_UPLOAD_MB = 50
 MAX_DURATION_SEC = 6 * 60
 
+# /response/* plots depend only on the parameters, not on an upload.
+RESPONSE_SR = 44100
+MAX_PLOT_POINTS = 4000
+
 # Tool name (as used in /process/<tool>) -> effect module.
 # Later stages only fill in the modules' process() functions.
 EFFECTS = {
@@ -130,6 +134,39 @@ def eq_params(raw):
     return params
 
 
+def ranged_params(raw, ranges):
+    """Read float params described by ranges = {name: (min, max, default)}.
+
+    Missing params get their default; values outside [min, max] raise
+    ValueError.
+    """
+    params = {}
+    for key, (low, high, default) in ranges.items():
+        value = _optional_float(raw, key)
+        if value is None:
+            value = default
+        elif not low <= value <= high:
+            raise ValueError(f"{key} must be between {low:g} and {high:g} (got {value:g}).")
+        params[key] = value
+    return params
+
+
+def reverb_params(raw):
+    """rt60, pre_delay_ms, wet (see reverb.PARAMS) and the circular toggle."""
+    circular = str(raw.get("circular", "")).lower() in ("1", "true", "on", "yes")
+    return {**ranged_params(raw, reverb.PARAMS), "circular": circular}
+
+
+def echo_params(raw):
+    """delay_ms, gain, mix (see echo.PARAMS) and mode."""
+    mode = raw.get("mode") or "feedback"
+    if mode not in echo.MODES:
+        raise ValueError(
+            f"Unknown mode '{mode}'. Expected one of: {', '.join(echo.MODES)}."
+        )
+    return {**ranged_params(raw, echo.PARAMS), "mode": mode}
+
+
 def save_spectrogram_png(audio, sr, path):
     """Spectrogram of the (mono-mixed) audio, via the shared STFT/plot code."""
     mono = audio.mean(axis=1) if audio.ndim == 2 else audio
@@ -151,6 +188,8 @@ def index():
         eq_presets=eq_filter.PRESETS,
         eq_bands=eq_filter.DEFAULT_BANDS,
         eq_max_gain=eq_filter.MAX_BAND_GAIN_DB,
+        reverb_params=reverb.PARAMS,
+        echo_params=echo.PARAMS,
     )
 
 
@@ -241,6 +280,11 @@ def process_tool(tool):
         }
         audio = processed
     else:
+        parse_params = {"reverb": reverb_params, "echo": echo_params}[tool]
+        try:
+            params = parse_params(params)
+        except (ValueError, TypeError) as e:
+            return error(f"Invalid {tool} parameters: {e}")
         audio, sr = effect.process(audio, sr, **params)
 
     sf.write(str(PROCESSED_DIR / f"{result_id}.wav"), audio, sr, subtype="FLOAT")
@@ -276,6 +320,44 @@ def result_spectrogram(result_id, kind):
     if not path.exists():
         abort(404)
     return send_file(path, mimetype="image/png")
+
+
+@app.get("/response/reverb")
+def response_reverb():
+    """Impulse response for ?rt60=&pre_delay_ms=, as {"t": [s], "h": [...]}."""
+    try:
+        params = reverb_params(request.args)
+    except (ValueError, TypeError) as e:
+        return error(f"Invalid reverb parameters: {e}")
+
+    h = reverb.generate_impulse_response(
+        RESPONSE_SR, params["rt60"], params["pre_delay_ms"]
+    )
+    step = -(-len(h) // MAX_PLOT_POINTS)  # ceil: plain decimation to <= MAX_PLOT_POINTS
+    t = np.arange(0, len(h), step) / RESPONSE_SR
+    return jsonify({"t": t.round(5).tolist(), "h": h[::step].round(6).tolist()})
+
+
+@app.get("/response/echo")
+def response_echo():
+    """Frequency response for ?delay_ms=&gain=&mode=, as {"freqs": [Hz], "mag_db": [...]}.
+
+    Optional f_max (Hz) zooms into [0, f_max], so the comb teeth stay
+    visible for long delays; default is up to Nyquist.
+    """
+    try:
+        params = echo_params(request.args)
+        f_max = _optional_float(request.args, "f_max")
+        if f_max is not None and not f_max > 0:
+            raise ValueError("f_max must be positive.")
+    except (ValueError, TypeError) as e:
+        return error(f"Invalid echo parameters: {e}")
+
+    freqs, mag_db = echo.echo_frequency_response(
+        RESPONSE_SR, params["delay_ms"], params["gain"], params["mode"],
+        n_points=MAX_PLOT_POINTS, f_max=f_max,
+    )
+    return jsonify({"freqs": freqs.round(3).tolist(), "mag_db": mag_db.round(2).tolist()})
 
 
 if __name__ == "__main__":

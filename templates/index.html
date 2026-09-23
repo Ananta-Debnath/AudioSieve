@@ -9,6 +9,17 @@
 <body>
   <h1>AudioSieve Audio Lab</h1>
 
+  {# Number inputs for params = {name: (min, max, default)}; fields = [(name, label, step)]. #}
+  {% macro number_inputs(params, fields) %}
+  {% for name, label, step in fields %}
+  {% set low, high, default = params[name] %}
+  <label>{{ label }}, {{ low }} to {{ high }}
+    <input type="number" name="{{ name }}" value="{{ default }}"
+           min="{{ low }}" max="{{ high }}" step="{{ step }}" required>
+  </label>
+  {% endfor %}
+  {% endmacro %}
+
   <nav class="tabs">
     <button type="button" data-tab="separate" class="active">Separation</button>
     <button type="button" data-tab="eq">EQ + Filter</button>
@@ -68,6 +79,33 @@
         <label>High cutoff (Hz, band-pass/stop) <input type="number" name="high_cutoff" value="3000" min="1"></label>
         <label>Order <input type="number" name="order" value="4" min="1" max="12"></label>
       </fieldset>
+      {% elif tool == "reverb" %}
+      <fieldset>
+        <legend>Reverb</legend>
+        {{ number_inputs(reverb_params, [("rt60", "RT60, decay time (s)", 0.1),
+                                         ("pre_delay_ms", "Pre-delay (ms)", 1),
+                                         ("wet", "Wet mix (0 = dry, 1 = reverb only)", 0.05)]) }}
+        <label><input type="checkbox" name="circular" value="true">
+          Circular convolution (the wrong way: no zero-padding, so the tail wraps onto the start)</label>
+      </fieldset>
+      <h3>Impulse response</h3>
+      <canvas class="response" width="680" height="220"></canvas>
+      {% elif tool == "echo" %}
+      <fieldset>
+        <legend>Mode</legend>
+        <label><input type="radio" name="mode" value="feedback" checked>
+          Feedback, y[n] = x[n] + g&middot;y[n&minus;D] (decaying repeats)</label>
+        <label><input type="radio" name="mode" value="feedforward">
+          Feedforward, y[n] = x[n] + g&middot;x[n&minus;D] (one repeat)</label>
+      </fieldset>
+      <fieldset>
+        <legend>Echo</legend>
+        {{ number_inputs(echo_params, [("delay_ms", "Delay (ms)", 1),
+                                       ("gain", "Gain g", 0.05),
+                                       ("mix", "Mix (0 = dry, 1 = full echo)", 0.05)]) }}
+      </fieldset>
+      <h3>Frequency response (first 10 comb teeth)</h3>
+      <canvas class="response" width="680" height="220"></canvas>
       {% endif %}
       <button type="submit">Process</button>
     </form>

@@ -59,6 +59,88 @@ function drawCurve(canvas, { freqs, gain_db }) {
   ctx.stroke();
 }
 
+// Linear x/y line plot with 5 ticks per axis (reverb IR, echo response).
+function drawPlot(canvas, xs, ys, { xUnit, yUnit, yRange: [yMin, yMax] }) {
+  const ctx = canvas.getContext("2d");
+  const { width: W, height: H } = canvas;
+  const pad = { left: 60, right: 14, top: 10, bottom: 26 };
+  const xMin = xs[0], xMax = xs[xs.length - 1];
+
+  const x = (v) => pad.left + ((v - xMin) / (xMax - xMin || 1)) * (W - pad.left - pad.right);
+  const y = (v) => pad.top + ((yMax - Math.max(yMin, Math.min(yMax, v))) / (yMax - yMin)) * (H - pad.top - pad.bottom);
+  const label = (v, unit) => `${+v.toPrecision(3)}${unit}`;
+
+  ctx.clearRect(0, 0, W, H);
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.lineWidth = 1;
+  ctx.fillStyle = "#666";
+  for (let i = 0; i <= 4; i++) {
+    const xv = xMin + (i / 4) * (xMax - xMin);
+    ctx.strokeStyle = "#e3e3e3";
+    ctx.beginPath(); ctx.moveTo(x(xv), pad.top); ctx.lineTo(x(xv), H - pad.bottom); ctx.stroke();
+    ctx.textAlign = i === 0 ? "left" : i === 4 ? "right" : "center";
+    ctx.fillText(label(xv, xUnit), x(xv), H - 8);
+
+    const yv = yMin + (i / 4) * (yMax - yMin);
+    ctx.strokeStyle = Math.abs(yv) < 1e-12 ? "#999" : "#e3e3e3";
+    ctx.beginPath(); ctx.moveTo(pad.left, y(yv)); ctx.lineTo(W - pad.right, y(yv)); ctx.stroke();
+    ctx.textAlign = "right";
+    ctx.fillText(label(yv, yUnit), pad.left - 4, y(yv) + 4);
+  }
+
+  ctx.strokeStyle = "#1565c0";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  xs.forEach((xv, i) => (i ? ctx.lineTo(x(xv), y(ys[i])) : ctx.moveTo(x(xv), y(ys[i]))));
+  ctx.stroke();
+}
+
+// Reverb IR / echo frequency response depend only on the parameters,
+// so they are fetched and redrawn live as the form changes (no upload).
+const COMB_TEETH = 10;
+const RESPONSE_PLOTS = {
+  reverb: {
+    query: (f) => ({ rt60: f.rt60.value, pre_delay_ms: f.pre_delay_ms.value }),
+    draw: (canvas, { t, h }) => {
+      const peak = Math.max(...h.map(Math.abs)) || 1;
+      drawPlot(canvas, t, h, { xUnit: " s", yUnit: "", yRange: [-peak, peak] });
+    },
+  },
+  echo: {
+    // Teeth are 1000 / delay_ms Hz apart, far too dense to see over the
+    // whole spectrum, so zoom in on the first few.
+    query: (f) => ({
+      delay_ms: f.delay_ms.value,
+      gain: f.gain.value,
+      mode: f.mode.value,
+      f_max: (COMB_TEETH * 1000) / f.delay_ms.value,
+    }),
+    draw: (canvas, { freqs, mag_db }) =>
+      drawPlot(canvas, freqs, mag_db, { xUnit: " Hz", yUnit: " dB", yRange: [-24, 24] }),
+  },
+};
+
+document.querySelectorAll("form[data-tool]").forEach((form) => {
+  const plot = RESPONSE_PLOTS[form.dataset.tool];
+  const canvas = form.querySelector("canvas.response");
+  if (!plot || !canvas) return;
+
+  let timer, latest = 0;
+  const update = async () => {
+    const inputs = form.querySelectorAll('input[type="number"]');
+    if (![...inputs].every((input) => input.checkValidity())) return;
+    const request = ++latest;
+    const res = await fetch(`/response/${form.dataset.tool}?${new URLSearchParams(plot.query(form.elements))}`);
+    if (!res.ok || request !== latest) return; // invalid params, or a newer request is in flight
+    plot.draw(canvas, await res.json());
+  };
+  form.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(update, 150);
+  });
+  update();
+});
+
 // EQ presets: choosing one fills in the form fields with its values;
 // editing any field afterwards switches the preset back to "(none)",
 // so what the form shows is always what gets processed.
