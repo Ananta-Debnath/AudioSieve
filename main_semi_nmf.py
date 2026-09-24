@@ -52,6 +52,7 @@ def main():
     # Dictionary for separated spectra only
     spectra_dict = {}
     mag_dict = {}
+    comp_dict = {}
     mask_dict = {}
     audio_dict = {}
 
@@ -90,7 +91,7 @@ def main():
 
     B, G = semi_supervised_nmf.separate_sources_nmf(
         X=magnitude.T,
-        num_components=30,
+        num_components=20,
     )
 
     print(f"B.shape: {B.shape}")
@@ -99,99 +100,110 @@ def main():
     semi_supervised_nmf.save_component_spectrograms(
         B,
         G,
+        output_dir="Spectograms/nmf/new"
+    )
+
+    nmf_mag = sum(
+        np.outer(B[:, k], G[k, :])
+        for k in range(B.shape[1])
+    )
+    nmf_mag = nmf_mag.T
+
+    nmf.save_nmf_visualizations(
+        B,
+        G,
+        sample_rate=44100,
+        n_fft=1024,
         output_dir="Spectograms/nmf"
     )
 
-    # nmf.save_nmf_visualizations(
-    #     W,
-    #     H,
-    #     sample_rate=44100,
-    #     n_fft=1024,
-    #     output_dir="Spectograms/nmf"
-    # )
+    df = nmf.analyze_nmf_components(
+        B,
+        G,
+        sample_rate=44100,
+        n_fft=1024
+    )
 
-    # df = nmf.analyze_nmf_components(
-    #     W,
-    #     H,
-    #     sample_rate=44100,
-    #     n_fft=1024
-    # )
+    df = semi_supervised_nmf.score_components(df)
 
     # # nmf.rank_nmf_components(df)
 
     # nmf.save_nmf_analysis(df)
 
-    # # -------------------------
-    # # Separation
-    # # -------------------------
+    # -------------------------
+    # Separation
+    # -------------------------
 
-    # # Bass
-    # df = nmf_sep.rank_bass_components(df)
+    # percussion
+    comp_dict["drum"] = df.sort_values(by="percussion_score", ascending=False).head(2).index.tolist()
+    print(f"drum_comp: {comp_dict['drum']}")
 
-    # mask_dict["bass"] = nmf_sep.get_bass_mask(
-    #     df, W, H, 
-    #     spectra, 
-    #     nmf_mag, 
-    #     # top_n=3,
-    #     # print_info=True
-    # )
+    # bass
+    comp_dict["bass"] = df.sort_values(by="bass_score", ascending=False).head(3).index.tolist()
+    print(f"bass_comp: {comp_dict['bass']}")
 
-    # # Drum
-    # df = nmf_sep.calculate_drum_score(df)
+    # # vocal
+    # comp_dict["vocal"] = df.sort_values(by="vocal_score", ascending=False).head(4).index.tolist()
+    # print(f"vocal_comp: {comp_dict['vocal']}")
 
-    # mask_dict["drum"] = nmf_sep.get_drum_mask(
-    #     df, W, H,
-    #     spectra,
-    #     nmf_mag,
-    #     # top_n=7,
-    #     # print_info=True
-    # )
+    # harmonic
+    comp_dict["harmonic"] = df.sort_values(by="harmonic_score", ascending=False).head(6).index.tolist()
+    print(f"harmonic_comp: {comp_dict['harmonic']}")
 
-    # mask_dict["rest"] = nmf_sep.get_rest_mask(mask_dict)
+    comp_used = sum(comp_dict.values(), [])
+    comp_dict["remaining"] = [i for i in range(B.shape[1]) if i not in comp_used]
 
-    # for key, mask in mask_dict.items():
-    #     spectra_dict[key] = utils.apply_mask(spectra, mask)
+    for key, comp in comp_dict.items():
+        mask_dict[key] = nmf_sep.get_custom_mask(
+            B, G, nmf_mag,
+            comps=comp,
+        )
 
-    # for key, spec in spectra_dict.items():
-    #     mag_dict[key] = utils.calculate_magnitude(spec)
+    mask_dict["rest"] = nmf_sep.get_rest_mask(mask_dict)
 
-    # for key, mag in mag_dict.items():
-    #     utils.save_spectrogram(
-    #         mag,
-    #         sample_rate,
-    #         hop_size,
-    #         spectogram_filename(key)
-    #     )
+    for key, mask in mask_dict.items():
+        spectra_dict[key] = utils.apply_mask(spectra, mask)
+
+    for key, spec in spectra_dict.items():
+        mag_dict[key] = utils.calculate_magnitude(spec)
+
+    for key, mag in mag_dict.items():
+        utils.save_spectrogram(
+            mag,
+            sample_rate,
+            hop_size,
+            spectogram_filename(key)
+        )
 
 
-    # # -------------------------
-    # # Inverse process
-    # # -------------------------
+    # -------------------------
+    # Inverse process
+    # -------------------------
 
-    # for key, spec in spectra_dict.items():
-    #     audio_dict[key] = stft.calculate_istft(
-    #         spec,
-    #         frame_size,
-    #         hop_size
-    #     )
+    for key, spec in spectra_dict.items():
+        audio_dict[key] = stft.calculate_istft(
+            spec,
+            frame_size,
+            hop_size
+        )
 
-    # # -------------------------
-    # # Save reconstructed audio
-    # # -------------------------
+    # -------------------------
+    # Save reconstructed audio
+    # -------------------------
 
-    # for key, audio in audio_dict.items():
-    #     utils.save_audio(
-    #         audio_filename(key),
-    #         sample_rate,
-    #         audio
-    #     )
+    for key, audio in audio_dict.items():
+        utils.save_audio(
+            audio_filename(key),
+            sample_rate,
+            audio
+        )
 
     print("Done!")
     print("Original:", input_file)
     print("Reconstructed:", output_file)
     print("Spectrogram:", spectogram_filename())
 
-    # nmf.save_nmf_analysis(df)
+    nmf.save_nmf_analysis(df)
     
     masks = nmf.nmf_component_masks(B, G)
 
