@@ -1,9 +1,13 @@
-"""AudioSieve Audio Lab: Flask app shell.
+"""SPECTRA signal processing lab: Flask app.
 
 Synchronous request -> process -> response. Each tool is independent:
 upload a file once, then run any tool on it by id.
 """
 
+import json
+import os
+import shutil
+import threading
 import uuid
 from pathlib import Path
 
@@ -18,13 +22,17 @@ import soundfile as sf
 from flask import Flask, abort, jsonify, render_template, request, send_file, url_for
 from werkzeug.exceptions import RequestEntityTooLarge
 
+import runs
 import stft
+import ui_config
 import utils
+from analysis.waveform import waveform_json
 from effects import echo, eq_filter, flanger, reverb
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 PROCESSED_DIR = BASE_DIR / "processed"
+DEMO_PATH = BASE_DIR / "static" / "demo" / "demo.wav"
 
 ALLOWED_EXTENSIONS = {"wav", "mp3", "flac"}
 MAX_UPLOAD_MB = 50
@@ -43,6 +51,28 @@ SPECTROGRAM_FRAME_SIZE = 1024
 SPECTROGRAM_HOP_SIZE = 512
 SPECTROGRAM_RANGE_DB = 90
 
+# The shared plot code (utils.save_spectrogram) takes its colours from
+# matplotlib's defaults; these make it a magma image on a dark
+# background, which the UI shows in both themes.
+SPECTROGRAM_STYLE = {
+    "image.cmap": "magma",
+    "figure.facecolor": "#111315",
+    "axes.facecolor": "#111315",
+    "savefig.facecolor": "#111315",
+    "text.color": "#E8EAEC",
+    "axes.labelcolor": "#E8EAEC",
+    "axes.edgecolor": "#9AA0A6",
+    "xtick.color": "#9AA0A6",
+    "ytick.color": "#9AA0A6",
+}
+# pyplot's current-figure state (and rcParams) are global, so only one
+# request thread may draw at a time.
+PLOT_LOCK = threading.Lock()
+
+# /response/eq: log-spaced grid over the audible range.
+EQ_RESPONSE_POINTS = 1000
+EQ_RESPONSE_RANGE_HZ = (20, 20000)
+
 # Tool name (as used in /process/<tool>) -> effect module.
 # Later stages only fill in the modules' process() functions.
 EFFECTS = {
@@ -52,11 +82,24 @@ EFFECTS = {
     "flanger": flanger,
 }
 
+# SEPARATION_MOCK=1: /process/separate returns the real contract, with
+# copies of the input as these stems, until the separation module is merged.
+SEPARATION_MOCK_STEMS = ("drums", "bass", "rest")
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 PROCESSED_DIR.mkdir(exist_ok=True)
+
+# One registry per output directory (tests point PROCESSED_DIR elsewhere).
+_registries = {}
+
+
+def run_registry():
+    if PROCESSED_DIR not in _registries:
+        _registries[PROCESSED_DIR] = runs.RunRegistry(PROCESSED_DIR)
+    return _registries[PROCESSED_DIR]
 
 
 def error(message, status=400):
@@ -79,6 +122,14 @@ def find_upload(file_id):
         if path.exists():
             return path
     return None
+
+
+def upload_info(file_id):
+    """What /upload returned for file_id (kept in a JSON sidecar), or {}."""
+    try:
+        return json.loads((UPLOAD_DIR / f"{file_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def request_params():
@@ -217,11 +268,50 @@ def save_spectrograms(before, after, sr, result_id):
         mags[kind] = _mono_magnitude(np.pad(audio, pad))
 
     floor = max(mag.max() for mag in mags.values()) * 10 ** (-SPECTROGRAM_RANGE_DB / 20)
-    for kind, mag in mags.items():
-        utils.save_spectrogram(
-            np.maximum(mag, floor), sr, SPECTROGRAM_HOP_SIZE,
-            str(PROCESSED_DIR / f"{result_id}_{kind}.png"),
-        )
+    with PLOT_LOCK, matplotlib.rc_context(SPECTROGRAM_STYLE):
+        for kind, mag in mags.items():
+            utils.save_spectrogram(
+                np.maximum(mag, floor), sr, SPECTROGRAM_HOP_SIZE,
+                str(PROCESSED_DIR / f"{result_id}_{kind}.png"),
+            )
+
+
+def write_result(result_id, audio, sr):
+    sf.write(str(PROCESSED_DIR / f"{result_id}.wav"), audio, sr, subtype="FLOAT")
+
+
+def result_urls(result_id):
+    return {
+        "url": url_for("result", result_id=result_id),
+        "download_url": url_for("result", result_id=result_id, download=1),
+    }
+
+
+def eq_response_freqs(params):
+    """Log-spaced grid over EQ_RESPONSE_RANGE_HZ. In hum mode the notch
+    centres and -3 dB edges are added, so notches only a few Hz wide
+    show up at their full depth however coarse the grid is there."""
+    freqs = np.geomspace(*EQ_RESPONSE_RANGE_HZ, EQ_RESPONSE_POINTS)
+    if params.get("mode") == "hum":
+        centres = params["hum_freq"] * np.arange(1, int(params["harmonics"]) + 1)
+        half = params["notch_width"] / 2
+        freqs = np.union1d(freqs, np.concatenate([centres - half, centres, centres + half]))
+    return freqs
+
+
+def eq_curve_at(freqs, sr, params):
+    """eq_filter.build_curve's gain curve, evaluated at any frequencies
+    (build_curve only evaluates at one frame's FFT bins). Same functions,
+    same validation."""
+    mode = params.get("mode", "eq")
+    if mode == "hum":
+        return eq_filter._hum_curve_from_params(freqs, sr, params)
+    curve = np.ones_like(freqs)
+    if mode in ("eq", "both"):
+        curve *= eq_filter.create_eq_curve(freqs, params.get("bands", eq_filter.DEFAULT_BANDS))
+    if mode in ("filter", "both"):
+        curve *= eq_filter._filter_curve_from_params(freqs, sr, params)
+    return curve
 
 
 @app.errorhandler(RequestEntityTooLarge)
@@ -231,32 +321,29 @@ def too_large(_e):
 
 @app.get("/")
 def index():
-    return render_template(
-        "index.html",
-        eq_presets=eq_filter.PRESETS,
-        eq_bands=eq_filter.DEFAULT_BANDS,
-        eq_max_gain=eq_filter.MAX_BAND_GAIN_DB,
-        eq_hum_params=eq_filter.HUM_PARAMS,
-        reverb_params=reverb.PARAMS,
-        echo_params=echo.PARAMS,
-        flanger_params=flanger.PARAMS,
-    )
+    tools = {tool["id"]: tool for tool in ui_config.TOOLS}
+    config = ui_config.page_config({
+        "max_upload_mb": MAX_UPLOAD_MB,
+        "max_duration_sec": MAX_DURATION_SEC,
+        "extensions": sorted(ALLOWED_EXTENSIONS),
+    })
+    return render_template("index.html", tools=tools, config=config)
 
 
-@app.post("/upload")
-def upload():
-    file = request.files.get("file")
-    if file is None or not file.filename:
-        return error("No file provided (expected form field 'file').")
+def register_upload(filename, save):
+    """Validate and register one audio file; save(path) writes it to path.
 
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    Shared by /upload and /upload/demo, so the demo track goes through
+    exactly the same checks and gets an ordinary file_id.
+    """
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_EXTENSIONS:
         allowed = ", ".join(f".{e}" for e in sorted(ALLOWED_EXTENSIONS))
         return error(f"Unsupported format '.{ext}'. Allowed: {allowed}.")
 
     file_id = str(uuid.uuid4())
     path = UPLOAD_DIR / f"{file_id}.{ext}"
-    file.save(path)
+    save(path)
 
     try:
         info = sf.info(str(path))
@@ -271,22 +358,93 @@ def upload():
             f"Max is {MAX_DURATION_SEC // 60} min."
         )
 
-    return jsonify({
+    meta = {
         "file_id": file_id,
-        "filename": file.filename,
+        "filename": filename,
         "duration": info.duration,
         "samplerate": info.samplerate,
         "channels": info.channels,
-    })
+    }
+    (UPLOAD_DIR / f"{file_id}.json").write_text(json.dumps(meta), encoding="utf-8")
+    return jsonify({**meta, "url": url_for("uploaded_audio", file_id=file_id)})
+
+
+@app.post("/upload")
+def upload():
+    file = request.files.get("file")
+    if file is None or not file.filename:
+        return error("No file provided (expected form field 'file').")
+    return register_upload(file.filename, file.save)
+
+
+@app.post("/upload/demo")
+def upload_demo():
+    """Register the shared demo track like any upload; returns a file_id."""
+    if not DEMO_PATH.exists():
+        return error(
+            "Demo track missing (static/demo/demo.wav). "
+            "Run: python scripts/make_placeholder_demo.py", 404,
+        )
+    return register_upload(DEMO_PATH.name, lambda path: shutil.copyfile(DEMO_PATH, path))
+
+
+@app.get("/upload/<file_id>")
+def uploaded_audio(file_id):
+    """The uploaded file itself, for the ORIGINAL player."""
+    path = find_upload(file_id)
+    if path is None:
+        abort(404)
+    return send_file(path)
+
+
+@app.get("/upload/<file_id>/waveform")
+def uploaded_waveform(file_id):
+    """Min/max envelope and duration of an upload, for its ORIGINAL player."""
+    path = find_upload(file_id)
+    if path is None:
+        abort(404)
+    audio, sr = sf.read(str(path), dtype="float32")
+    return jsonify(waveform_json(audio, sr))
 
 
 @app.post("/process/separate")
 def process_separate():
-    return error(
-        "Separation is not implemented in the app shell yet; "
-        "it is being developed on the separation branch.",
-        501,
+    if os.environ.get("SEPARATION_MOCK") != "1":
+        return error(
+            "Separation is not implemented in the app shell yet; "
+            "it is being developed on the separation branch.",
+            501,
+        )
+
+    params = request_params()
+    file_id = params.pop("file_id", None)
+    src = find_upload(file_id)
+    if src is None:
+        return error("Unknown or missing file_id. Upload a file first.", 404)
+
+    # Mock: every "stem" is a copy of the input.
+    audio, sr = sf.read(str(src), dtype="float32")
+    run_id = str(uuid.uuid4())
+    stems = []
+    for name in SEPARATION_MOCK_STEMS:
+        stem_id = str(uuid.uuid4())
+        write_result(stem_id, audio, sr)
+        stems.append({"name": name, "file": f"{stem_id}.wav", **result_urls(stem_id)})
+
+    run_registry().add(
+        run_id, "separate", {"mock": True}, file_id,
+        {"stems": [{"name": s["name"], "file": s["file"]} for s in stems]},
+        sr=sr, source=upload_info(file_id),
     )
+    wave = waveform_json(audio, sr)  # the same for every copy
+    return jsonify({
+        "run_id": run_id,
+        "input_url": url_for("uploaded_audio", file_id=file_id),
+        "stems": [
+            {"name": s["name"], "url": s["url"], "download_url": s["download_url"], **wave}
+            for s in stems
+        ],
+    })
 
 
 @app.post("/process/<tool>")
@@ -330,15 +488,30 @@ def process_tool(tool):
         processed, sr = effect.process(audio, sr, **params)
 
     save_spectrograms(audio, processed, sr, result_id)
-    sf.write(str(PROCESSED_DIR / f"{result_id}.wav"), processed, sr, subtype="FLOAT")
+    write_result(result_id, processed, sr)
+
+    # The result id doubles as the run id.
+    run_registry().add(
+        result_id, tool, params, file_id,
+        {
+            "audio": f"{result_id}.wav",
+            "spectrograms": {kind: f"{result_id}_{kind}.png" for kind in ("before", "after")},
+        },
+        sr=sr, source=upload_info(file_id),
+    )
 
     return jsonify({
         "result_id": result_id,
-        "url": url_for("result", result_id=result_id),
-        "download_url": url_for("result", result_id=result_id, download=1),
+        "run_id": result_id,
+        **result_urls(result_id),
+        "input_url": url_for("uploaded_audio", file_id=file_id),
         "spectrograms": {
             kind: url_for("result_spectrogram", result_id=result_id, kind=kind)
             for kind in ("before", "after")
+        },
+        "waveforms": {
+            "before": waveform_json(audio, sr),
+            "after": waveform_json(processed, sr),
         },
         **extra,
     })
@@ -355,7 +528,7 @@ def result(result_id):
         path,
         mimetype="audio/wav",
         as_attachment=request.args.get("download") == "1",
-        download_name=f"audiosieve_{result_id[:8]}.wav",
+        download_name=f"spectra_{result_id[:8]}.wav",
     )
 
 
@@ -367,6 +540,24 @@ def result_spectrogram(result_id, kind):
     if not path.exists():
         abort(404)
     return send_file(path, mimetype="image/png")
+
+
+@app.get("/response/eq")
+def response_eq():
+    """Gain curve for the same params as /process/eq (preset, mode, band
+    gains, filter and hum fields), as {"freqs": [Hz], "gain_db": [...]}
+    on a log-spaced grid from 20 Hz to 20 kHz."""
+    try:
+        params = eq_filter.resolve_params(eq_params(request.args))
+        freqs = eq_response_freqs(params)
+        curve = eq_curve_at(freqs, RESPONSE_SR, params)
+    except (ValueError, TypeError, KeyError) as e:
+        return error(f"Invalid EQ/filter parameters: {e}")
+
+    return jsonify({
+        "freqs": freqs.round(2).tolist(),
+        "gain_db": (20 * np.log10(np.maximum(curve, 1e-6))).round(2).tolist(),
+    })
 
 
 @app.get("/response/reverb")

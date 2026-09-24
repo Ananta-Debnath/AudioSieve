@@ -1,152 +1,127 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AudioSieve Audio Lab</title>
+  <title>SPECTRA</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23111315'/%3E%3Cpath d='M2 12V9M5 12V4M8 12V7M11 12V2M14 12V8' stroke='%2322D3EE' stroke-width='2'/%3E%3C/svg%3E">
+  <script>
+    // Apply the saved theme before the first paint, so light mode doesn't flash dark.
+    try {
+      var saved = localStorage.getItem("spectra-theme");
+      if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
+    } catch (e) {}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800&family=Martian+Mono:wght@400;500;700&display=swap">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-  <h1>AudioSieve Audio Lab</h1>
+  <header class="masthead">
+    <h1 class="app-title" data-app-name></h1>
+    <p class="app-subtitle">signal processing lab · CSE 220 · BUET</p>
+    <button class="theme-toggle" type="button" data-theme-toggle>
+      <span data-theme-icon="dark" aria-hidden="true">☾</span>
+      <span class="theme-sep" aria-hidden="true">/</span>
+      <span data-theme-icon="light" aria-hidden="true">☀</span>
+    </button>
+  </header>
 
-  {# Number inputs for params = {name: (min, max, default)}; fields = [(name, label, step)]. #}
-  {% macro number_inputs(params, fields) %}
-  {% for name, label, step in fields %}
-  {% set low, high, default = params[name] %}
-  <label>{{ label }}, {{ low }} to {{ high }}
-    <input type="number" name="{{ name }}" value="{{ default }}"
-           min="{{ low }}" max="{{ high }}" step="{{ step }}" required>
-  </label>
-  {% endfor %}
-  {% endmacro %}
-
-  <nav class="tabs">
-    <button type="button" data-tab="separate" class="active">Separation</button>
-    <button type="button" data-tab="eq">EQ + Filter</button>
-    <button type="button" data-tab="reverb">Reverb</button>
-    <button type="button" data-tab="echo">Echo + Delay</button>
-    <button type="button" data-tab="flanger">Flanger</button>
+  <nav class="tabbar" role="tablist" aria-label="Tools">
+    {% for tool in config.tools %}
+    <button class="tab" type="button" role="tab" id="tab-{{ tool.id }}"
+            aria-controls="view-{{ tool.id }}" aria-selected="false" tabindex="-1"
+            data-view="{{ tool.id }}">
+      <span class="tab-num">{{ tool.number }}</span>
+      <span class="tab-name">{{ tool.name }}</span>
+    </button>
+    {% endfor %}
+    <button class="tab tab-backstage" type="button" role="tab" id="tab-backstage"
+            aria-controls="view-backstage" aria-selected="false" tabindex="-1"
+            data-view="backstage">
+      <span class="tab-name">Backstage</span>
+    </button>
   </nav>
 
-  {% for tool, title in [("separate", "Separation"), ("eq", "EQ + Filter"),
-                         ("reverb", "Reverb"), ("echo", "Echo + Delay"),
-                         ("flanger", "Flanger")] %}
-  <section class="panel" id="panel-{{ tool }}" {% if not loop.first %}hidden{% endif %}>
-    <h2>{{ title }}</h2>
-    <form data-tool="{{ tool }}">
-      <input type="file" name="file" accept=".wav,.mp3,.flac" required>
-      <div class="original" hidden>
-        <h3>Original</h3>
-        <audio class="audio-original" controls></audio>
+  <main>
+    {% for tool in config.tools %}
+    <section class="view tool" id="view-{{ tool.id }}" role="tabpanel"
+             aria-labelledby="tab-{{ tool.id }}" data-tool="{{ tool.id }}" hidden>
+      <div class="col-controls">
+        <div class="tool-head">
+          <h2 class="tool-title">{{ tool.name }}</h2>
+          <p class="tool-subtitle">{{ tool.subtitle }}</p>
+          <button class="btn btn-small" type="button" data-how
+                  aria-expanded="false" aria-controls="drawer">How it works</button>
+        </div>
+        <div class="group" data-source></div>
+        <div class="params" data-params></div>
+        <div class="run-area">
+          <button class="run-btn" type="button" data-run disabled>Run</button>
+          <p class="run-hint" data-run-hint>Load a track first</p>
+          <div class="msg msg-warn" data-run-error role="alert" hidden></div>
+        </div>
       </div>
-      {% if tool == "eq" %}
-      <fieldset>
-        <legend>Preset</legend>
-        <label>Preset (fills in the settings below; editing any of them switches back to none)
-          <select name="preset">
-            <option value="">(none, use settings below)</option>
-            {% for name in eq_presets %}
-            <option value="{{ name }}">{{ name.replace("_", " ") }}</option>
-            {% endfor %}
-          </select>
-        </label>
-      </fieldset>
-      <fieldset>
-        <legend>Mode</legend>
-        <label><input type="radio" name="mode" value="eq" checked> EQ</label>
-        <label><input type="radio" name="mode" value="filter"> Filter</label>
-        <label><input type="radio" name="mode" value="both"> EQ + Filter</label>
-        <label><input type="radio" name="mode" value="hum"> Hum removal</label>
-      </fieldset>
-      <fieldset>
-        <legend>EQ band gains (dB, -{{ eq_max_gain }} to {{ eq_max_gain }})</legend>
-        {% for band in eq_bands %}
-        <label>{{ band.name }} ({{ band.center }} Hz{% if band.type != "peak" %}, {{ band.type.replace("shelf", " shelf") }}{% endif %})
-          <input type="number" name="band_{{ loop.index0 }}_gain_db" value="0"
-                 min="-{{ eq_max_gain }}" max="{{ eq_max_gain }}" step="0.5">
-        </label>
-        {% endfor %}
-      </fieldset>
-      <fieldset>
-        <legend>Filter</legend>
-        <label>Type
-          <select name="filter_type">
-            <option value="lowpass">Low-pass</option>
-            <option value="highpass">High-pass</option>
-            <option value="bandpass">Band-pass</option>
-            <option value="bandstop">Band-stop (notch)</option>
-          </select>
-        </label>
-        <label>Cutoff (Hz, low/high-pass) <input type="number" name="cutoff" value="4000" min="1"></label>
-        <label>Low cutoff (Hz, band-pass/stop) <input type="number" name="low_cutoff" value="300" min="1"></label>
-        <label>High cutoff (Hz, band-pass/stop) <input type="number" name="high_cutoff" value="3000" min="1"></label>
-        <label>Order <input type="number" name="order" value="4" min="1" max="12"></label>
-      </fieldset>
-      <fieldset>
-        <legend>Hum removal (notches at the hum frequency and its harmonics)</legend>
-        {{ number_inputs(eq_hum_params, [("hum_freq", "Hum frequency (Hz; mains is 50 or 60)", 0.1),
-                                         ("harmonics", "Harmonics to notch (1 = the hum frequency only)", 1),
-                                         ("notch_width", "Notch width (Hz)", 0.5)]) }}
-      </fieldset>
-      {% elif tool == "reverb" %}
-      <fieldset>
-        <legend>Reverb</legend>
-        {{ number_inputs(reverb_params, [("rt60", "RT60, decay time (s)", 0.1),
-                                         ("pre_delay_ms", "Pre-delay (ms)", 1),
-                                         ("wet", "Wet mix (0 = dry, 1 = reverb only)", 0.05)]) }}
-        <label><input type="checkbox" name="circular" value="true">
-          Circular convolution (the wrong way: no zero-padding, so the tail wraps onto the start)</label>
-      </fieldset>
-      <h3>Impulse response</h3>
-      <canvas class="response" width="680" height="220"></canvas>
-      {% elif tool == "echo" %}
-      <fieldset>
-        <legend>Mode</legend>
-        <label><input type="radio" name="mode" value="feedback" checked>
-          Feedback, y[n] = x[n] + g&middot;y[n&minus;D] (decaying repeats)</label>
-        <label><input type="radio" name="mode" value="feedforward">
-          Feedforward, y[n] = x[n] + g&middot;x[n&minus;D] (one repeat)</label>
-      </fieldset>
-      <fieldset>
-        <legend>Echo</legend>
-        {{ number_inputs(echo_params, [("delay_ms", "Delay (ms)", 1),
-                                       ("gain", "Gain g", 0.05),
-                                       ("mix", "Mix (0 = dry, 1 = full echo)", 0.05)]) }}
-      </fieldset>
-      <h3>Frequency response (first 10 comb teeth)</h3>
-      <canvas class="response" width="680" height="220"></canvas>
-      {% elif tool == "flanger" %}
-      <fieldset>
-        <legend>Flanger, y[n] = x[n] + g&middot;x[n&minus;D(n)], with D(n) sweeping
-          from the minimum delay to minimum + sweep and back</legend>
-        {{ number_inputs(flanger_params, [("min_delay_ms", "Minimum delay (ms)", 0.1),
-                                          ("sweep_ms", "Sweep (ms)", 0.1),
-                                          ("rate_hz", "Sweeps per second (Hz)", 0.05),
-                                          ("gain", "Gain g (1 = full cancellation at the notches)", 0.05)]) }}
-      </fieldset>
-      <h3>Frequency response over one sweep (animated)</h3>
-      <canvas class="response" width="680" height="220"></canvas>
-      {% endif %}
-      <button type="submit">Process</button>
-    </form>
-    <p class="status"></p>
-    <div class="result" hidden>
-      <h3>Processed</h3>
-      <audio class="audio-processed" controls></audio>
-      <a class="download">Download</a>
-      {% if tool == "eq" %}
-      <h3>Gain curve</h3>
-      <canvas class="curve" width="680" height="260"></canvas>
-      {% endif %}
-      <h3>Spectrogram before</h3>
-      <img class="spec-before" alt="Spectrogram before processing">
-      <h3>Spectrogram after</h3>
-      <img class="spec-after" alt="Spectrogram after processing">
-    </div>
-  </section>
-  {% endfor %}
 
-  <script id="eq-presets" type="application/json">{{ eq_presets | tojson }}</script>
-  <script src="{{ url_for('static', filename='app.js') }}"></script>
+      <div class="col-visuals">
+        {% if tool.id != "separate" %}
+        <div class="block">
+          <div class="block-head">
+            <h3 class="label">System response</h3>
+            <div class="block-tools" data-plot-tools></div>
+          </div>
+          <div class="chart-box">
+            <canvas data-response role="img" aria-label="{{ tool.name }} system response"></canvas>
+            <p class="chart-msg" data-response-msg role="status" hidden></p>
+          </div>
+        </div>
+        {% endif %}
+        <div class="block">
+          <div class="block-head">
+            <h3 class="label">{{ "Stems" if tool.id == "separate" else "Output" }}</h3>
+          </div>
+          <div data-output></div>
+        </div>
+      </div>
+    </section>
+    {% endfor %}
+
+    <section class="view backstage" id="view-backstage" role="tabpanel"
+             aria-labelledby="tab-backstage" hidden>
+      <div class="backstage-empty">
+        <h2 class="tool-title">Backstage</h2>
+        <p class="tool-subtitle">Analysis of each run arrives in the next stage.</p>
+      </div>
+    </section>
+  </main>
+
+  <aside class="drawer" id="drawer" aria-label="How it works">
+    <div class="drawer-head">
+      <p class="label">How it works</p>
+      <button class="drawer-close" type="button" data-drawer-close aria-label="Close how it works">✕</button>
+    </div>
+    {% for tool in tools.values() %}
+    <div class="drawer-body" data-drawer-tool="{{ tool.id }}" hidden>
+      <h2 class="drawer-title">{{ tool.name }}</h2>
+      <pre class="equation">{{ tool.equations | join("\n") }}</pre>
+      {% for sentence in tool.explain %}
+      <p>{{ sentence }}</p>
+      {% endfor %}
+      <h3 class="label">Parameters</h3>
+      <dl class="param-notes">
+        {% for name, note in tool.param_notes %}
+        <dt>{{ name }}</dt>
+        <dd>{{ note }}</dd>
+        {% endfor %}
+      </dl>
+    </div>
+    {% endfor %}
+  </aside>
+
+  <script id="spectra-config" type="application/json">{{ config | tojson }}</script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/wavesurfer.js@7.12.12/dist/wavesurfer.min.js"></script>
+  <script type="module" src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
