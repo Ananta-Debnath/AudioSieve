@@ -273,7 +273,7 @@ def get_rest_mask(mask_dict):
     return rest_mask
 
 
-def get_custom_spectra(W, H, spectra, comps, power=2):
+def get_custom_mask(W, H, spectra, comps, power=2):
     # Wiener-style soft mask for selected components
     magnitude = sum(
         np.outer(W[:, k], H[k, :])
@@ -291,6 +291,4 @@ def get_custom_spectra(W, H, spectra, comps, power=2):
 
     mask = np.clip(mask, 0, 1)
 
-    spectra = spectra * mask
-
-    return spectra
+    return mask
