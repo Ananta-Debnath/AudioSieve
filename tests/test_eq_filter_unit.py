@@ -1,5 +1,7 @@
 """Unit tests for effects/eq_filter.py. Run with: python -m pytest tests"""
 
+from math import inf
+
 import numpy as np
 import pytest
 
@@ -267,3 +269,64 @@ def test_hum_removal_removes_hum_and_keeps_music():
 def test_boost_never_clips():
     out, _ = eq_filter.process(noise(SR) * 9, SR, {"mode": "eq", "bands": eq_filter._eq_bands([15] * 5)})
     assert np.max(np.abs(out)) <= 1.0
+
+
+# ---------------------------------------------------------------------
+# Presets on real audio
+# ---------------------------------------------------------------------
+#
+# What each preset's name promises, measured by running sine tones
+# through process() rather than reading the curve, so frequency-
+# resolution limits show up too: the old hum preset (a band-stop on
+# 43 Hz bins) had a fine-looking curve but only cut 50 Hz by 4.5 dB.
+
+# (preset, tone Hz, min gain dB, max gain dB)
+PRESET_CLAIMS = [
+    # The 300-3400 Hz telephone voice band, -3 dB at its edges.
+    ("telephone", 100, -inf, -20),
+    ("telephone", 300, -3.5, -2.5),
+    ("telephone", 1000, -0.5, 0.5),
+    ("telephone", 3400, -3.5, -2.5),
+    ("telephone", 8000, -inf, -20),
+    # A narrower band (500-5000 Hz) with gentler slopes.
+    ("radio", 100, -inf, -20),
+    ("radio", 500, -3.5, -2.5),
+    ("radio", 1500, -0.5, 0.5),
+    ("radio", 5000, -3.5, -2.5),
+    ("radio", 12000, -inf, -10),
+    # Cuts below 80 Hz, leaves the music's bass alone.
+    ("remove_rumble", 30, -inf, -15),
+    ("remove_rumble", 50, -inf, -10),
+    ("remove_rumble", 150, -0.5, 0.5),
+    ("remove_rumble", 1000, -0.5, 0.5),
+    # 50 Hz and its harmonics gone, everything in between untouched.
+    *[("remove_hum_50hz", f, -inf, -40) for f in (50, 100, 150, 200, 250)],
+    ("remove_hum_50hz", 75, -0.5, 0.5),
+    ("remove_hum_50hz", 440, -0.5, 0.5),
+    # Lows up, mids and highs unchanged.
+    ("bass_boost", 40, 5, inf),
+    ("bass_boost", 60, 5, inf),
+    ("bass_boost", 1000, -0.5, 0.5),
+    ("bass_boost", 5000, -0.5, 0.5),
+]
+
+
+def tone_gain_db(params, freq, seconds=4):
+    """Gain (dB) process() gives a sine tone, measured away from the edges."""
+    t = np.arange(seconds * SR) / SR
+    x = 0.1 * np.sin(2 * np.pi * freq * t)  # quiet, so boosts don't trigger the rescale
+    y, _ = eq_filter.process(x, SR, params)
+    mid = slice(SR, -SR)
+    return db(np.sqrt(np.mean(y[mid] ** 2)) / np.sqrt(np.mean(x[mid] ** 2)))
+
+
+@pytest.mark.parametrize(
+    "preset, freq, min_db, max_db", PRESET_CLAIMS,
+    ids=[f"{preset}-{freq}Hz" for preset, freq, *_ in PRESET_CLAIMS],
+)
+def test_preset_does_what_its_name_says(preset, freq, min_db, max_db):
+    assert min_db <= tone_gain_db({"preset": preset}, freq) <= max_db
+
+
+def test_every_preset_has_claims():
+    assert {preset for preset, *_ in PRESET_CLAIMS} == set(eq_filter.PRESETS)

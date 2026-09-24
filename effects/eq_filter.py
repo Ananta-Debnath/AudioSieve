@@ -83,8 +83,6 @@ PRESETS = {
     "remove_hum_50hz": {"mode": "hum", "hum_freq": 50, "harmonics": 5,
                         "notch_width": 4},
     "bass_boost": {"mode": "eq", "bands": _eq_bands([8, 2, 0, 0, 0])},
-    "bright": {"mode": "eq", "bands": _eq_bands([0, -2, 0, 3, 6])},
-    "warm": {"mode": "eq", "bands": _eq_bands([4, 2, 0, -2, -4])},
 }
 
 

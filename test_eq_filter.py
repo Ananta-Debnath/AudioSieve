@@ -38,7 +38,7 @@ CASES = {
     "bandstop_800_1200": {"mode": "filter", "filter_type": "bandstop",
                           "low_cutoff": 800, "high_cutoff": 1200, "order": 2},
     "both_bright_no_rumble": {"mode": "both",
-                              "bands": eq_filter.PRESETS["bright"]["bands"],
+                              "bands": eq_filter._eq_bands([0, -2, 0, 3, 6]),
                               "filter_type": "highpass", "cutoff": 80, "order": 4},
     **{f"preset_{name}": {"preset": name} for name in eq_filter.PRESETS},
 }
