@@ -702,6 +702,331 @@ def analyze_nmf_components(
             "weighted_centroid": weighted_centroid
         })
 
+    df = pd.DataFrame(results)
+    df_vocal = analyze_vocal_features(
+        W, H,
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        eps=eps
+    )
+
+    df_merged = df.merge(
+        df_vocal,
+        on="component",
+        how="left"
+    )
+
+    return df_merged
+
+
+def analyze_vocal_features(
+    W,
+    H,
+    sample_rate,
+    n_fft,
+    eps=1e-10
+):
+    """
+    Extract a small set of vocal-oriented features
+    from NMF components.
+
+    W : (K, N)
+        NMF basis matrix.
+
+    H : (N, T)
+        NMF activation matrix.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        One row per NMF component.
+    """
+
+    W = np.maximum(W, 0)
+    H = np.maximum(H, 0)
+
+    K, num_components = W.shape
+
+    freqs = np.linspace(
+        0,
+        sample_rate / 2,
+        K
+    )
+
+    results = []
+
+    for component_idx in range(num_components):
+
+        W_i = W[:, component_idx]
+        H_i = H[component_idx]
+
+        # ----------------------------------------------------
+        # Reconstructed component
+        # ----------------------------------------------------
+
+        component = (
+            W_i[:, None] *
+            H_i[None, :]
+        )
+
+        spectrum = np.mean(
+            component,
+            axis=1
+        )
+
+        spectrum = np.maximum(
+            spectrum,
+            0
+        )
+
+        total_energy = (
+            np.sum(spectrum) + eps
+        )
+
+        # ====================================================
+        # 1. Formant strength
+        # ====================================================
+
+        formant_bands = [
+            (300, 1000),
+            (800, 2500),
+            (1800, 3500)
+        ]
+
+        formant_values = []
+
+        for low, high in formant_bands:
+
+            mask = (
+                (freqs >= low) &
+                (freqs <= high)
+            )
+
+            if np.any(mask):
+
+                formant_values.append(
+                    np.sum(spectrum[mask])
+                    / total_energy
+                )
+
+        formant_strength = (
+            np.mean(formant_values)
+            if formant_values
+            else 0.0
+        )
+
+        # ====================================================
+        # 2. Spectral envelope smoothness
+        # ====================================================
+
+        if len(spectrum) >= 15:
+
+            kernel = np.ones(15) / 15
+
+            envelope = np.convolve(
+                spectrum,
+                kernel,
+                mode="same"
+            )
+
+            envelope_change = np.mean(
+                np.abs(np.diff(envelope))
+            )
+
+            spectral_envelope_smoothness = (
+                1.0 /
+                (
+                    1.0 +
+                    envelope_change /
+                    (
+                        np.mean(envelope)
+                        + eps
+                    )
+                )
+            )
+
+        else:
+
+            spectral_envelope_smoothness = 0.0
+
+        # ====================================================
+        # 3. Pitch trajectory
+        # ====================================================
+
+        pitch_mask = (
+            (freqs >= 70) &
+            (freqs <= 500)
+        )
+
+        pitch_freqs = freqs[pitch_mask]
+
+        pitch_spectrum = (
+            component[pitch_mask]
+        )
+
+        if len(pitch_freqs) > 0:
+
+            peak_indices = np.argmax(
+                pitch_spectrum,
+                axis=0
+            )
+
+            pitch = pitch_freqs[
+                peak_indices
+            ]
+
+            peak_energy = np.max(
+                pitch_spectrum,
+                axis=0
+            )
+
+            frame_energy = (
+                np.sum(
+                    pitch_spectrum,
+                    axis=0
+                ) + eps
+            )
+
+            pitch_confidence = (
+                peak_energy /
+                frame_energy
+            )
+
+        else:
+
+            pitch = np.zeros(
+                component.shape[1]
+            )
+
+            pitch_confidence = np.zeros(
+                component.shape[1]
+            )
+
+        # # ====================================================
+        # # 4. Pitch continuity
+        # # ====================================================
+
+        # valid_pitch = (
+        #     pitch_confidence >= 0.10
+        # )
+
+        # if np.sum(valid_pitch) >= 3:
+
+        #     valid_p = pitch[
+        #         valid_pitch
+        #     ]
+
+        #     log_pitch = np.log2(
+        #         np.maximum(
+        #             valid_p,
+        #             eps
+        #         )
+        #     )
+
+        #     pitch_changes = np.abs(
+        #         np.diff(log_pitch)
+        #     )
+
+        #     if len(pitch_changes) > 0:
+
+        #         pitch_continuity = np.exp(
+        #             -10.0 *
+        #             np.median(
+        #                 pitch_changes
+        #             )
+        #         )
+
+        #     else:
+
+        #         pitch_continuity = 0.0
+
+        # else:
+
+        #     pitch_continuity = 0.0
+
+        # pitch_continuity = float(
+        #     np.clip(
+        #         pitch_continuity,
+        #         0,
+        #         1
+        #     )
+        # )
+
+        # # ====================================================
+        # # 5. Pitch range
+        # # ====================================================
+
+        # if np.sum(valid_pitch) >= 3:
+
+        #     valid_p = pitch[
+        #         valid_pitch
+        #     ]
+
+        #     min_pitch = np.min(
+        #         valid_p
+        #     )
+
+        #     max_pitch = np.max(
+        #         valid_p
+        #     )
+
+        #     if min_pitch > 0:
+
+        #         pitch_range_semitones = (
+        #             12 *
+        #             np.log2(
+        #                 max_pitch /
+        #                 (min_pitch + eps)
+        #             )
+        #         )
+
+        #     else:
+
+        #         pitch_range_semitones = 0.0
+
+        # else:
+
+        #     pitch_range_semitones = 0.0
+
+        # ---------------------------------------------------------
+        # Mid-band ratio (300–4000 Hz)
+        # ---------------------------------------------------------
+
+        W_i = W[:, component_idx]
+        H_i = H[component_idx]
+
+        component = W_i[:, None] * H_i[None, :]
+
+        spectrum = np.mean(component, axis=1)
+
+        mid_mask = (freqs >= 300) & (freqs <= 4000)
+
+        mid_band_ratio = (
+            np.sum(spectrum[mid_mask]) /
+            (np.sum(spectrum) + eps)
+        )
+
+        # Keep the raw semitone range.
+        # Don't convert it to a score yet.
+        # It is more useful for analysis.
+        
+        results.append({
+            "component": component_idx,
+            "formant_strength":
+                float(formant_strength),
+            "spectral_envelope_smoothness":
+                float(spectral_envelope_smoothness),
+            # "pitch_continuity":
+            #     float(pitch_continuity),
+            # "pitch_range_semitones":
+            #     float(pitch_range_semitones),
+            "mid_band_ratio":
+                float(mid_band_ratio),
+        })
+
+    df = pd.DataFrame(results)
+    df.to_csv("nmf_vocal_features.csv", index=False)
+
     return pd.DataFrame(results)
 
 
@@ -741,6 +1066,10 @@ def score_components(df):
     num_peaks = df["num_peaks"].values
     rhythmicity = df["rhythmicity"].values
 
+    mid_band_ratio = df["mid_band_ratio"].values
+    formant_strength = df["formant_strength"].values
+    spectral_envelope_smoothness = df["spectral_envelope_smoothness"].values
+
     # percussive
     percussion_score = (
         0.40 * transientness +
@@ -763,12 +1092,9 @@ def score_components(df):
     df["bass_score"] = bass_score
 
     vocal_score = (
-        0.30 * sustain +
-        0.25 * (1 - transientness) +
-        0.20 * harmonicity +
-        0.10 * (1 - bass_ratio) +
-        0.10 * spectral_centroid +
-        0.05 * spectral_bandwidth
+        0.45 * mid_band_ratio +
+        0.35 * formant_strength +
+        0.20 * spectral_envelope_smoothness
     )
     df["vocal_score"] = vocal_score
 

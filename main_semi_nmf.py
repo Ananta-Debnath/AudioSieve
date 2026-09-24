@@ -91,7 +91,7 @@ def main():
 
     B, G = semi_supervised_nmf.separate_sources_nmf(
         X=magnitude.T,
-        num_components=16,
+        num_components=20,
     )
 
     print(f"B.shape: {B.shape}")
@@ -120,8 +120,20 @@ def main():
     df = nmf.analyze_nmf_components(
         B,
         G,
-        sample_rate=44100,
-        n_fft=1024
+        sample_rate=sample_rate,
+        n_fft=frame_size,
+    )
+
+    df_vocal = semi_supervised_nmf.analyze_vocal_features(
+        B, G,
+        sample_rate=sample_rate,
+        n_fft=frame_size,
+    )
+
+    df = df.merge(
+        df_vocal,
+        on="component",
+        how="left"
     )
 
     df = semi_supervised_nmf.score_components(df)
@@ -135,7 +147,8 @@ def main():
     # -------------------------
     PERCUSSION_THRESHOLD = 0.25
     BASS_THRESHOLD = 0.6
-    HARMONIC_THRESHOLD = 0.55
+    VOCAL_THRESHOLD = 0.6
+    HARMONIC_THRESHOLD = 0.525
 
     # percussion
     # comp_dict["percussion"] = df.sort_values(by="percussion_score", ascending=False).head(2).index.tolist()
@@ -147,17 +160,19 @@ def main():
     comp_dict["bass"] = df[df["bass_score"] > BASS_THRESHOLD].index.tolist()
     print(f"bass_comp: {comp_dict['bass']}")
 
-    # # vocal
+    # vocal
     # comp_dict["vocal"] = df.sort_values(by="vocal_score", ascending=False).head(4).index.tolist()
-    # print(f"vocal_comp: {comp_dict['vocal']}")
+    comp_dict["vocal"] = df[df["vocal_score"] > VOCAL_THRESHOLD].index.tolist()
+    print(f"vocal_comp: {comp_dict['vocal']}")
 
     # harmonic
     # comp_dict["harmonic"] = df.sort_values(by="harmonic_score", ascending=False).head(6).index.tolist()
-    comp_dict["harmonic"] = df[df["harmonic_score"] > HARMONIC_THRESHOLD].index.tolist()
-    print(f"harmonic_comp: {comp_dict['harmonic']}")
+    # comp_dict["harmonic"] = df[df["harmonic_score"] > HARMONIC_THRESHOLD].index.tolist()
+    # print(f"harmonic_comp: {comp_dict['harmonic']}")
 
     comp_used = sum(comp_dict.values(), [])
     comp_dict["remaining"] = [i for i in range(B.shape[1]) if i not in comp_used]
+    print(f"remaining_comp: {comp_dict['remaining']}")
 
     for key, comp in comp_dict.items():
         mask_dict[key] = nmf_sep.get_custom_mask(
