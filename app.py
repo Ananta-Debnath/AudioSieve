@@ -34,6 +34,9 @@ MAX_DURATION_SEC = 6 * 60
 RESPONSE_SR = 44100
 MAX_PLOT_POINTS = 4000
 
+# Colour range of the before/after spectrograms (see save_spectrograms).
+SPECTROGRAM_RANGE_DB = 90
+
 # Tool name (as used in /process/<tool>) -> effect module.
 # Later stages only fill in the modules' process() functions.
 EFFECTS = {
@@ -93,6 +96,7 @@ def eq_params(raw):
     low_cutoff, high_cutoff, order.
     EQ bands (modes 'eq' and 'both'): either a JSON 'bands' list, or flat
     form fields band_<i>_gain_db applied to eq_filter.DEFAULT_BANDS.
+    Hum fields (mode 'hum'): see eq_filter.HUM_PARAMS.
     """
     if raw.get("preset"):
         return {"preset": raw["preset"]}
@@ -103,6 +107,9 @@ def eq_params(raw):
             f"Unknown mode '{mode}'. Expected one of: {', '.join(eq_filter.MODES)}."
         )
     params = {"mode": mode}
+
+    if mode == "hum":
+        return {**params, **ranged_params(raw, eq_filter.HUM_PARAMS)}
 
     if mode in ("filter", "both"):
         order = _optional_float(raw, "order")
@@ -167,13 +174,34 @@ def echo_params(raw):
     return {**ranged_params(raw, echo.PARAMS), "mode": mode}
 
 
-def save_spectrogram_png(audio, sr, path):
-    """Spectrogram of the (mono-mixed) audio, via the shared STFT/plot code."""
+def _mono_magnitude(audio):
     mono = audio.mean(axis=1) if audio.ndim == 2 else audio
     spectra = stft.calculatr_stft(mono, eq_filter.FRAME_SIZE, eq_filter.HOP_SIZE)
-    utils.save_spectrogram(
-        utils.calculate_magnitude(spectra), sr, eq_filter.HOP_SIZE, str(path)
-    )
+    return utils.calculate_magnitude(spectra)
+
+
+def save_spectrograms(before, after, sr, result_id):
+    """Before/after spectrograms (mono mix) via the shared STFT/plot code.
+
+    Reverb and echo tails make 'after' longer, so the shorter one is
+    padded with silence to put both on the same time axis. The plot
+    scales its colours from its quietest to its loudest bin, and digital
+    silence (e.g. that padding) is -200 dB, which would wash out
+    everything else; both are floored at the same level,
+    SPECTROGRAM_RANGE_DB below the louder peak, instead.
+    """
+    length = max(len(before), len(after))
+    mags = {}
+    for kind, audio in (("before", before), ("after", after)):
+        pad = [(0, length - len(audio))] + [(0, 0)] * (audio.ndim - 1)
+        mags[kind] = _mono_magnitude(np.pad(audio, pad))
+
+    floor = max(mag.max() for mag in mags.values()) * 10 ** (-SPECTROGRAM_RANGE_DB / 20)
+    for kind, mag in mags.items():
+        utils.save_spectrogram(
+            np.maximum(mag, floor), sr, eq_filter.HOP_SIZE,
+            str(PROCESSED_DIR / f"{result_id}_{kind}.png"),
+        )
 
 
 @app.errorhandler(RequestEntityTooLarge)
@@ -188,6 +216,7 @@ def index():
         eq_presets=eq_filter.PRESETS,
         eq_bands=eq_filter.DEFAULT_BANDS,
         eq_max_gain=eq_filter.MAX_BAND_GAIN_DB,
+        eq_hum_params=eq_filter.HUM_PARAMS,
         reverb_params=reverb.PARAMS,
         echo_params=echo.PARAMS,
     )
@@ -265,34 +294,29 @@ def process_tool(tool):
         except (ValueError, TypeError, KeyError) as e:
             return error(f"Invalid EQ/filter parameters: {e}")
 
-        for kind, data in (("before", audio), ("after", processed)):
-            save_spectrogram_png(data, sr, PROCESSED_DIR / f"{result_id}_{kind}.png")
-
-        extra = {
-            "curve": {
-                "freqs": freq_bins.round(1).tolist(),
-                "gain_db": (20 * np.log10(np.maximum(curve, 1e-6))).round(2).tolist(),
-            },
-            "spectrograms": {
-                kind: url_for("result_spectrogram", result_id=result_id, kind=kind)
-                for kind in ("before", "after")
-            },
+        extra["curve"] = {
+            "freqs": freq_bins.round(1).tolist(),
+            "gain_db": (20 * np.log10(np.maximum(curve, 1e-6))).round(2).tolist(),
         }
-        audio = processed
     else:
         parse_params = {"reverb": reverb_params, "echo": echo_params}[tool]
         try:
             params = parse_params(params)
         except (ValueError, TypeError) as e:
             return error(f"Invalid {tool} parameters: {e}")
-        audio, sr = effect.process(audio, sr, **params)
+        processed, sr = effect.process(audio, sr, **params)
 
-    sf.write(str(PROCESSED_DIR / f"{result_id}.wav"), audio, sr, subtype="FLOAT")
+    save_spectrograms(audio, processed, sr, result_id)
+    sf.write(str(PROCESSED_DIR / f"{result_id}.wav"), processed, sr, subtype="FLOAT")
 
     return jsonify({
         "result_id": result_id,
         "url": url_for("result", result_id=result_id),
         "download_url": url_for("result", result_id=result_id, download=1),
+        "spectrograms": {
+            kind: url_for("result_spectrogram", result_id=result_id, kind=kind)
+            for kind in ("before", "after")
+        },
         **extra,
     })
 

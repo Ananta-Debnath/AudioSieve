@@ -54,6 +54,7 @@
         <label><input type="radio" name="mode" value="eq" checked> EQ</label>
         <label><input type="radio" name="mode" value="filter"> Filter</label>
         <label><input type="radio" name="mode" value="both"> EQ + Filter</label>
+        <label><input type="radio" name="mode" value="hum"> Hum removal</label>
       </fieldset>
       <fieldset>
         <legend>EQ band gains (dB, -{{ eq_max_gain }} to {{ eq_max_gain }})</legend>
@@ -78,6 +79,12 @@
         <label>Low cutoff (Hz, band-pass/stop) <input type="number" name="low_cutoff" value="300" min="1"></label>
         <label>High cutoff (Hz, band-pass/stop) <input type="number" name="high_cutoff" value="3000" min="1"></label>
         <label>Order <input type="number" name="order" value="4" min="1" max="12"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Hum removal (notches at the hum frequency and its harmonics)</legend>
+        {{ number_inputs(eq_hum_params, [("hum_freq", "Hum frequency (Hz; mains is 50 or 60)", 0.1),
+                                         ("harmonics", "Harmonics to notch (1 = the hum frequency only)", 1),
+                                         ("notch_width", "Notch width (Hz)", 0.5)]) }}
       </fieldset>
       {% elif tool == "reverb" %}
       <fieldset>
@@ -117,11 +124,11 @@
       {% if tool == "eq" %}
       <h3>Gain curve</h3>
       <canvas class="curve" width="680" height="260"></canvas>
+      {% endif %}
       <h3>Spectrogram before</h3>
       <img class="spec-before" alt="Spectrogram before processing">
       <h3>Spectrogram after</h3>
       <img class="spec-after" alt="Spectrogram after processing">
-      {% endif %}
     </div>
   </section>
   {% endfor %}

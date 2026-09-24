@@ -164,7 +164,8 @@ if (eqForm && presetData) {
     for (let i = 0; eqForm.elements[`band_${i}_gain_db`]; i++) {
       setField(`band_${i}_gain_db`, preset.bands ? preset.bands[i].gain_db : 0);
     }
-    for (const key of ["filter_type", "cutoff", "low_cutoff", "high_cutoff", "order"]) {
+    for (const key of ["filter_type", "cutoff", "low_cutoff", "high_cutoff", "order",
+                       "hum_freq", "harmonics", "notch_width"]) {
       setField(key, preset[key]);
     }
   });

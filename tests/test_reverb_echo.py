@@ -345,12 +345,30 @@ def test_echo_route_uses_mode_and_delay(client):
     ("echo", {"delay_ms": 5}),
     ("echo", {"gain": 0.95}),
     ("echo", {"mode": "pingpong"}),
+    ("eq", {"mode": "hum", "hum_freq": 100}),
+    ("eq", {"mode": "hum", "harmonics": 2.5}),
 ])
 def test_process_routes_reject_bad_params(client, tool, params):
     file_id = upload(client, noise(SR), SR)
     res = client.post(f"/process/{tool}", json={"file_id": file_id, **params})
     assert res.status_code == 400
     assert "Invalid" in res.get_json()["error"]
+
+
+@pytest.mark.parametrize("tool, params", [
+    ("eq", {"mode": "hum"}),
+    ("reverb", {"rt60": 0.5}),
+    ("echo", {"delay_ms": 100}),
+])
+def test_process_routes_return_before_after_spectrograms(client, tool, params):
+    file_id = upload(client, noise(SR), SR)
+    res = client.post(f"/process/{tool}", json={"file_id": file_id, **params})
+    assert res.status_code == 200, res.get_json()
+    urls = res.get_json()["spectrograms"]
+    for kind in ("before", "after"):
+        png = client.get(urls[kind])
+        assert png.status_code == 200
+        assert png.mimetype == "image/png"
 
 
 def test_reverb_response_route(client):

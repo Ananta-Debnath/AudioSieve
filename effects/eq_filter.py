@@ -10,6 +10,8 @@ the same for every frame):
 - eq: sum of per-band boost/cut shapes in dB (Gaussian peaks, low/high
   shelves), converted to linear gain.
 - both: the EQ curve and the filter curve multiplied together.
+- hum: narrow notches at a mains-hum frequency and its harmonics, on a
+  much longer frame (see HUM_FRAME_SIZE).
 """
 
 import numpy as np
@@ -20,13 +22,34 @@ import utils
 FRAME_SIZE = 1024
 HOP_SIZE = 512
 
-MODES = ("eq", "filter", "both")
+MODES = ("eq", "filter", "both", "hum")
 FILTER_TYPES = ("lowpass", "highpass", "bandpass", "bandstop")
 BAND_TYPES = ("peak", "lowshelf", "highshelf")
 MAX_BAND_GAIN_DB = 15
 
 # Steepness of the shelf transition (same role as a filter order).
 SHELF_ORDER = 2
+
+# Hum notches are a few Hz wide, but FRAME_SIZE bins are sr / 1024
+# (~43 Hz) apart, far too coarse to cut one: a 50 Hz notch there only
+# reduces a 50 Hz tone by ~4.5 dB. Frequency resolution is sr /
+# frame_size, so hum mode uses a 64x longer frame: ~0.67 Hz bins at
+# 44.1 kHz. The price is time resolution (~1.5 s frames), which doesn't
+# matter here because the curve is flat everywhere except the notches.
+# Only the first and last ~0.5 s keep some hum: telling hum apart from
+# notes a few Hz away takes that much signal (true of any notch this
+# narrow, IIR ones included).
+HUM_FRAME_SIZE = 65536
+HUM_HOP_SIZE = HUM_FRAME_SIZE // 2
+NOTCH_ORDER = 4
+
+# Hum parameter -> (min, max, default); the route validates against these.
+# Mains hum is 50 Hz (e.g. Bangladesh, Europe) or 60 Hz (e.g. the US).
+HUM_PARAMS = {
+    "hum_freq": (40, 70, 50),
+    "harmonics": (1, 10, 5),
+    "notch_width": (1, 10, 4),
+}
 
 # 5-band EQ.
 # - peak: Gaussian bump centred on 'center'; 'bandwidth' is its full
@@ -57,8 +80,8 @@ PRESETS = {
               "low_cutoff": 500, "high_cutoff": 5000, "order": 2},
     "remove_rumble": {"mode": "filter", "filter_type": "highpass",
                       "cutoff": 80, "order": 4},
-    "remove_hum_50hz": {"mode": "filter", "filter_type": "bandstop",
-                        "low_cutoff": 40, "high_cutoff": 62, "order": 2},
+    "remove_hum_50hz": {"mode": "hum", "hum_freq": 50, "harmonics": 5,
+                        "notch_width": 4},
     "bass_boost": {"mode": "eq", "bands": _eq_bands([8, 2, 0, 0, 0])},
     "bright": {"mode": "eq", "bands": _eq_bands([0, -2, 0, 3, 6])},
     "warm": {"mode": "eq", "bands": _eq_bands([4, 2, 0, -2, -4])},
@@ -137,6 +160,31 @@ def create_filter_curve(freq_bins, filter_type, cutoff=None,
         f"Unknown filter_type '{filter_type}'. "
         f"Expected one of: {', '.join(FILTER_TYPES)}."
     )
+
+
+def create_hum_curve(freq_bins, hum_freq, harmonics, notch_width, order=NOTCH_ORDER):
+    """Notches at hum_freq, 2·hum_freq, ..., harmonics·hum_freq.
+
+    Each notch is a Butterworth band-stop (_bandstop), 0 exactly on the
+    harmonic and notch_width Hz wide between its -3 dB points. _bandstop
+    centres on sqrt(low·high), so for centre c the edges solve
+    low·high = c^2 and high - low = notch_width.
+
+    Returns: array of gain values in [0, 1], same length as freq_bins.
+    """
+    freq_bins = np.asarray(freq_bins, dtype=float)
+
+    if hum_freq <= 0 or notch_width <= 0:
+        raise ValueError("hum_freq and notch_width must be positive.")
+    if harmonics < 1 or harmonics != int(harmonics):
+        raise ValueError("harmonics must be a whole number, at least 1.")
+
+    gain = np.ones_like(freq_bins)
+    for k in range(1, int(harmonics) + 1):
+        centre = k * hum_freq
+        low = np.sqrt(centre ** 2 + notch_width ** 2 / 4) - notch_width / 2
+        gain *= _bandstop(freq_bins, low, low + notch_width, order)
+    return gain
 
 
 # ---------------------------------------------------------------------
@@ -223,12 +271,33 @@ def _filter_curve_from_params(freq_bins, sr, params):
     )
 
 
-def build_curve(sr, params, frame_size=FRAME_SIZE):
+def _hum_curve_from_params(freq_bins, sr, params):
+    top = params["harmonics"] * params["hum_freq"]
+    if top >= sr / 2:
+        raise ValueError(
+            f"Highest harmonic ({top:g} Hz) must be below Nyquist ({sr / 2:g} Hz)."
+        )
+    return create_hum_curve(
+        freq_bins, params["hum_freq"], params["harmonics"], params["notch_width"]
+    )
+
+
+def frame_and_hop(params):
+    """(frame_size, hop_size) for the params' mode: hum needs long frames."""
+    if resolve_params(params).get("mode") == "hum":
+        return HUM_FRAME_SIZE, HUM_HOP_SIZE
+    return FRAME_SIZE, HOP_SIZE
+
+
+def build_curve(sr, params, frame_size=None):
     """Build the gain curve for the rfft bins of one frame from params.
 
+    frame_size defaults to the mode's own (see frame_and_hop).
     Returns (freq_bins, curve).
     """
     params = resolve_params(params)
+    if frame_size is None:
+        frame_size, _ = frame_and_hop(params)
     freq_bins = np.fft.rfftfreq(frame_size, d=1 / sr)
     mode = params.get("mode", "eq")
 
@@ -236,6 +305,9 @@ def build_curve(sr, params, frame_size=FRAME_SIZE):
         raise ValueError(
             f"Unknown mode '{mode}'. Expected one of: {', '.join(MODES)}."
         )
+
+    if mode == "hum":
+        return freq_bins, _hum_curve_from_params(freq_bins, sr, params)
 
     curve = np.ones_like(freq_bins)
     if mode in ("eq", "both"):
@@ -274,6 +346,8 @@ def process(audio, sr, params):
       {'mode': 'filter', 'filter_type': 'bandpass', 'low_cutoff': 300, 'high_cutoff': 3000, 'order': 4}
     params example for both at once (EQ curve x filter curve):
       {'mode': 'both', 'bands': [...], 'filter_type': 'highpass', 'cutoff': 80}
+    params example for hum removal (notches at 50, 100, ..., 250 Hz):
+      {'mode': 'hum', 'hum_freq': 50, 'harmonics': 5, 'notch_width': 4}
     params example for a preset (see PRESETS):
       {'preset': 'telephone'}
     Returns: (processed_audio, sr)
@@ -281,15 +355,16 @@ def process(audio, sr, params):
     audio: float ndarray, shape (samples,) or (samples, channels).
     """
     audio = np.asarray(audio, dtype=np.float64)
-    _, curve = build_curve(sr, params)
+    frame_size, hop_size = frame_and_hop(params)
+    _, curve = build_curve(sr, params, frame_size)
+
+    def run(x):
+        return _process_channel(x, curve, frame_size, hop_size)
 
     if audio.ndim == 1:
-        out = _process_channel(audio, curve)
+        out = run(audio)
     else:
-        out = np.stack(
-            [_process_channel(audio[:, ch], curve) for ch in range(audio.shape[1])],
-            axis=1,
-        )
+        out = np.stack([run(audio[:, ch]) for ch in range(audio.shape[1])], axis=1)
 
     # EQ boosts can push peaks past full scale. Scale down instead of
     # letting the export clamp (distort) them; the clip is the same

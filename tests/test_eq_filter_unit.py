@@ -69,6 +69,30 @@ def test_bandstop_is_minus_3db_at_edges_and_zero_at_center():
     assert gain[4] > 0.999
 
 
+def test_hum_curve_notches_each_harmonic_only():
+    harmonics = [50.0 * k for k in range(1, 6)]
+    gain = eq_filter.create_hum_curve(harmonics + [75.0, 300.0, 1000.0], 50, 5, 4)
+    assert np.allclose(gain[:5], 0, atol=1e-12)
+    assert np.all(gain[5:] > 0.99)  # between harmonics, and past the last one
+
+
+def test_hum_notch_is_minus_3db_at_its_edges():
+    centre, width = 50.0, 4.0
+    low = np.sqrt(centre ** 2 + width ** 2 / 4) - width / 2
+    gain = eq_filter.create_hum_curve([low, centre, low + width], centre, 1, width)
+    assert gain[0] == pytest.approx(MINUS_3_DB)
+    assert gain[1] == pytest.approx(0, abs=1e-12)
+    assert gain[2] == pytest.approx(MINUS_3_DB)
+
+
+@pytest.mark.parametrize("hum_freq, harmonics, notch_width", [
+    (0, 5, 4), (50, 0, 4), (50, 2.5, 4), (50, 5, 0),
+])
+def test_hum_curve_rejects_bad_params(hum_freq, harmonics, notch_width):
+    with pytest.raises(ValueError):
+        eq_filter.create_hum_curve(FREQS, hum_freq, harmonics, notch_width)
+
+
 @pytest.mark.parametrize("kwargs", [
     {"filter_type": "lowpass"},                                    # no cutoff
     {"filter_type": "highpass", "cutoff": -5},
@@ -174,6 +198,19 @@ def test_build_curve_rejects_bad_params(params):
         eq_filter.build_curve(SR, params)
 
 
+def test_hum_mode_uses_sub_hz_bins():
+    freqs, _ = eq_filter.build_curve(SR, {"preset": "remove_hum_50hz"})
+    assert len(freqs) == eq_filter.HUM_FRAME_SIZE // 2 + 1
+    assert freqs[1] < 1
+
+
+def test_hum_harmonics_must_stay_below_nyquist():
+    params = {"mode": "hum", "hum_freq": 50, "harmonics": 10, "notch_width": 4}
+    eq_filter.build_curve(SR, params)  # 500 Hz: fine
+    with pytest.raises(ValueError):
+        eq_filter.build_curve(800, params)
+
+
 # ---------------------------------------------------------------------
 # process()
 # ---------------------------------------------------------------------
@@ -190,9 +227,10 @@ def test_flat_eq_reconstructs_input_exactly():
     assert np.allclose(out, audio, atol=1e-6)
 
 
+@pytest.mark.parametrize("preset", ["telephone", "remove_hum_50hz"])
 @pytest.mark.parametrize("length", [1, 100, 1023, 1024, 1537, 44100])
-def test_output_length_matches_input(length):
-    out, _ = eq_filter.process(noise(length), SR, {"preset": "telephone"})
+def test_output_length_matches_input(length, preset):
+    out, _ = eq_filter.process(noise(length), SR, {"preset": preset})
     assert out.shape == (length,)
 
 
@@ -212,6 +250,18 @@ def test_lowpass_removes_high_tone():
                                {"mode": "filter", "filter_type": "lowpass", "cutoff": 1000})
     residual = out - low * 0.4
     assert np.sqrt(np.mean(residual[2048:-2048] ** 2)) < 0.01
+
+
+def test_hum_removal_removes_hum_and_keeps_music():
+    t = np.arange(8 * SR) / SR
+    hum = 0.1 * sum(np.sin(2 * np.pi * 50 * k * t + k) / k for k in range(1, 6))
+    tone = 0.1 * np.sin(2 * np.pi * 440 * t)
+    out, _ = eq_filter.process(hum + tone, SR, {"preset": "remove_hum_50hz"})
+
+    # Away from the edges, where the hum is only partly removed (see HUM_FRAME_SIZE).
+    mid = slice(SR, -SR)
+    rms = lambda x: np.sqrt(np.mean(x ** 2))
+    assert db(rms(out[mid] - tone[mid]) / rms(hum[mid])) < -40
 
 
 def test_boost_never_clips():
