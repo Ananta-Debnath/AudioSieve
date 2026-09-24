@@ -258,6 +258,10 @@ def get_rest_mask(mask_dict):
     
     # Identify indices where the mask sum exceeds 1
     over_one = mask_sum > 1
+    over_one = np.ones_like(mask_sum, dtype=bool)  # set all to True
+
+    print(f"Mask sum exceeds 1: {np.sum(over_one)}")
+    print(f"Mask sum under 1: {np.sum(~over_one)}")
     
     # Scale all masks in the dictionary at those specific indices so they sum to 1
     for key in mask_dict:

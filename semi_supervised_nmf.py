@@ -1109,3 +1109,201 @@ def score_components(df):
     df["harmonic_score"] = harmonic_score
     
     return df
+
+
+def get_framewise_vocal_mask(
+    W,
+    H,
+    comp_used,
+    sample_rate,
+    n_fft,
+    low_freq=300,
+    high_freq=4000,
+    threshold=0.45,
+    eps=1e-10
+):
+    """
+    Generate a frame-wise vocal/harmonic mask from NMF W and H.
+
+    Parameters
+    ----------
+    W : ndarray, shape (K, N)
+        NMF basis matrix.
+
+    H : ndarray, shape (N, T)
+        NMF activation matrix.
+
+    sample_rate : int
+        Audio sample rate.
+
+    n_fft : int
+        FFT size.
+
+    threshold : float
+        Minimum vocal score required for a component/frame to
+        contribute to the vocal mask.
+
+    Returns
+    -------
+    mask : ndarray, shape (K, T)
+        Vocal mask in the range [0, 1].
+    """
+
+    W = np.maximum(W, 0)
+    H = np.maximum(H, 0)
+
+    K, num_components = W.shape
+    T = H.shape[1]
+
+    # Frequency axis
+    freqs = np.linspace(
+        0,
+        sample_rate / 2,
+        K
+    )
+
+    mid_mask = (
+        (freqs >= low_freq) &
+        (freqs <= high_freq)
+    )
+
+    # Final accumulated vocal reconstruction
+    vocal_reconstruction = np.zeros((K, T))
+    remaining_reconstruction = np.zeros((K, T))
+
+    # Total NMF reconstruction
+    total_reconstruction = W @ H
+
+    for component_idx in range(num_components):
+        if component_idx in comp_used:
+            continue
+
+        W_i = W[:, component_idx]
+        H_i = H[component_idx]
+
+        # ---------------------------------------------------------
+        # Component spectrogram: frequency x time
+        # ---------------------------------------------------------
+        component = W_i[:, None] * H_i[None, :]
+
+        # ---------------------------------------------------------
+        # Frame-wise mid-band ratio
+        # ---------------------------------------------------------
+        total_energy = np.sum(component, axis=0) + eps
+        mid_energy = np.sum(
+            component[mid_mask, :],
+            axis=0
+        )
+
+        mid_band_ratio = (
+            mid_energy / total_energy
+        )
+
+        # ---------------------------------------------------------
+        # Frame-wise formant-like strength
+        #
+        # Compare energy in overlapping vocal regions.
+        # Strong concentration in these regions increases score.
+        # ---------------------------------------------------------
+        band1 = (freqs >= 300) & (freqs <= 1000)
+        band2 = (freqs >= 800) & (freqs <= 2500)
+        band3 = (freqs >= 1800) & (freqs <= 3500)
+
+        e1 = np.sum(component[band1, :], axis=0)
+        e2 = np.sum(component[band2, :], axis=0)
+        e3 = np.sum(component[band3, :], axis=0)
+
+        formant_energy = np.maximum(
+            e1,
+            np.maximum(e2, e3)
+        )
+
+        formant_strength = (
+            formant_energy /
+            total_energy
+        )
+
+        # ---------------------------------------------------------
+        # Frame-wise spectral envelope smoothness
+        # ---------------------------------------------------------
+        normalized_spectrum = (
+            component /
+            (total_energy[None, :] + eps)
+        )
+
+        smoothness = 1.0 - (
+            np.mean(
+                np.abs(
+                    np.diff(
+                        normalized_spectrum,
+                        axis=0
+                    )
+                ),
+                axis=0
+            )
+        )
+
+        smoothness = np.clip(
+            smoothness,
+            0,
+            1
+        )
+
+        # ---------------------------------------------------------
+        # Vocal score for EVERY frame
+        # ---------------------------------------------------------
+        vocal_score = (
+            0.45 * mid_band_ratio +
+            0.35 * formant_strength +
+            0.20 * smoothness
+        )
+
+        # ---------------------------------------------------------
+        # Evaluate score
+        #
+        # Only keep frames whose score is sufficiently vocal-like.
+        # Smooth transition instead of hard binary cutoff.
+        # ---------------------------------------------------------
+        score = np.clip(
+            (vocal_score - threshold) /
+            (1.0 - threshold + eps),
+            0,
+            1
+        )
+
+        # Weight the actual component by the frame-wise score
+        vocal_reconstruction += (
+            component *
+            score[None, :]
+        )
+
+        remaining_reconstruction += (
+            component *
+            (1.0 - score[None, :])
+        )
+
+    # -------------------------------------------------------------
+    # Convert accumulated vocal reconstruction into a mask
+    # -------------------------------------------------------------
+    mask = (
+        vocal_reconstruction**2 /
+        (total_reconstruction + eps)**2
+    )
+    mask = np.clip(mask, 0, 1)
+    vocal_mask = mask.T
+
+    mask_r = (
+        remaining_reconstruction**2 /
+        (total_reconstruction + eps)**2
+    )
+    mask_r = np.clip(mask_r, 0, 1)
+    non_vocal_mask = mask_r.T
+
+    # Print info
+    print("mask min:", np.min(mask))
+    print("mask max:", np.max(mask))
+    print("mask mean:", np.mean(mask))
+    print("mask median:", np.median(mask))
+    print("fraction > 0.5:", np.mean(mask > 0.5))
+
+    return vocal_mask, non_vocal_mask

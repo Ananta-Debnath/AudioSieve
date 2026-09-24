@@ -148,6 +148,7 @@ def main():
     PERCUSSION_THRESHOLD = 0.25
     BASS_THRESHOLD = 0.6
     VOCAL_THRESHOLD = 0.6
+    # VOCAL_THRESHOLD = 0.45
     HARMONIC_THRESHOLD = 0.525
 
     # percussion
@@ -179,6 +180,16 @@ def main():
             B, G, nmf_mag,
             comps=comp,
         )
+
+    # # keep only the unused ones
+    # vocal_mask, non_vocal_mask = semi_supervised_nmf.get_framewise_vocal_mask(
+    #     B, G, comp_used,
+    #     sample_rate=sample_rate,
+    #     n_fft=frame_size,
+    #     threshold=VOCAL_THRESHOLD
+    # )
+    # mask_dict["vocal"] = vocal_mask
+    # mask_dict["remaining"] = non_vocal_mask
 
     mask_dict["rest"] = nmf_sep.get_rest_mask(mask_dict)
 
