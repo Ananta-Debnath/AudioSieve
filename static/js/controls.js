@@ -4,6 +4,20 @@ import { el } from "./util.js";
 
 const LOG_STEPS = 1000; // slider positions for a log-scale (frequency) slider
 
+// A parameter value as the sliders show it: [number, unit], e.g.
+// ["+8.0", "dB"], ["3.40", "kHz"].
+export function formatValue(spec, value) {
+  let shown = Number(value);
+  let unit = spec.unit;
+  if (unit === "Hz" && shown >= 1000) {
+    shown /= 1000;
+    unit = "kHz";
+  }
+  const digits = unit === "kHz" ? 2 : spec.decimals;
+  const sign = spec.min < 0 && value > 0 ? "+" : "";
+  return [`${sign}${shown.toFixed(digits)}`, unit];
+}
+
 export class Slider {
   // onChange(value) fires on user input (dragging, keys, double-click reset).
   constructor(spec, onChange) {
@@ -64,21 +78,8 @@ export class Slider {
     this.onChange(this.value);
   }
 
-  text() {
-    const { unit, decimals, min } = this.spec;
-    let value = this.value;
-    let shownUnit = unit;
-    if (unit === "Hz" && value >= 1000) {
-      value /= 1000;
-      shownUnit = "kHz";
-    }
-    const digits = shownUnit === "kHz" ? 2 : decimals;
-    const sign = min < 0 && this.value > 0 ? "+" : "";
-    return [`${sign}${value.toFixed(digits)}`, shownUnit];
-  }
-
   show() {
-    const [number, unit] = this.text();
+    const [number, unit] = formatValue(this.spec, this.value);
     this.readout.replaceChildren(number, unit ? el("span", { class: "unit" }, unit) : "");
     this.input.setAttribute("aria-valuetext", `${number} ${unit}`.trim());
     const lo = Number(this.input.min);

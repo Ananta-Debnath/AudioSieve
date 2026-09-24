@@ -16,17 +16,16 @@ def envelope(audio, n_points=ENVELOPE_POINTS):
     values each (empty for empty audio).
     """
     audio = np.asarray(audio)
-    if audio.ndim == 2:
-        high, low = audio.max(axis=1), audio.min(axis=1)
-    else:
-        high = low = audio
+    frames = audio if audio.ndim == 2 else audio[:, None]
 
-    n_points = min(n_points, len(high))
+    n_points = min(n_points, len(frames))
     if n_points == 0:
         return np.zeros(0, np.float32), np.zeros(0, np.float32)
-    starts = np.linspace(0, len(high), n_points, endpoint=False).astype(int)
-    return (np.maximum.reduceat(high, starts).astype(np.float32),
-            np.minimum.reduceat(low, starts).astype(np.float32))
+    starts = np.linspace(0, len(frames), n_points, endpoint=False).astype(int)
+    # Reduce each bucket first, then across channels: much faster than a
+    # per-sample max over the (tiny) channel axis on a long track.
+    return (np.maximum.reduceat(frames, starts, axis=0).max(axis=1).astype(np.float32),
+            np.minimum.reduceat(frames, starts, axis=0).min(axis=1).astype(np.float32))
 
 
 def waveform_json(audio, sr, n_points=ENVELOPE_POINTS):

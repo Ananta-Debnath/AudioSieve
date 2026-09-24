@@ -1,4 +1,5 @@
-// SPECTRA page bootstrap: header, tabs, drawer, tools.
+// SPECTRA page bootstrap: header, tabs, drawer, tools, Backstage.
+import { Backstage } from "./backstage.js";
 import { CONFIG } from "./config.js";
 import { initDrawer } from "./drawer.js";
 import { installSpaceShortcut } from "./player.js";
@@ -16,10 +17,11 @@ let currentView = null;
 
 const app = {
   drawer: initDrawer(),
+  backstage: new Backstage(document.getElementById("view-backstage")),
   tools: null,
-  runIds: [], // this session's runs, oldest first
 
-  showView(id, { focusTab = false } = {}) {
+  // runId (Backstage only): the run to select.
+  showView(id, { focusTab = false, runId = null } = {}) {
     if (id === currentView || !views.has(id)) return;
     currentView = id;
     for (const tab of tabs) {
@@ -34,14 +36,16 @@ const app = {
     this.drawer.viewChanged(id);
     const tool = this.tools.get(id);
     if (tool) tool.shown();
+    if (id === "backstage") this.backstage.shown(runId);
   },
 
   recordRun(runId) {
-    this.runIds.push(runId);
+    this.backstage.record(runId);
   },
 
-  openBackstage(_runId) {
-    this.showView("backstage");
+  // → BACKSTAGE under a tool's output: open Backstage on that run.
+  openBackstage(runId) {
+    this.showView("backstage", { runId });
   },
 };
 

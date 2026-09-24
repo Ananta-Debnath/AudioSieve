@@ -170,8 +170,10 @@ TOOLS = [
         "name": "Echo + Delay",
         "subtitle": "Add delayed copies with a difference equation.",
         "equations": [
-            "feedforward:  y[n] = x[n] + g · x[n − D]",
-            "feedback:     y[n] = x[n] + g · y[n − D]",
+            "feedforward:",
+            "  y[n] = x[n] + g · x[n − D]",
+            "feedback:",
+            "  y[n] = x[n] + g · y[n − D]",
         ],
         "explain": [
             "An echo is a delayed, quieter copy of the signal, written as a "

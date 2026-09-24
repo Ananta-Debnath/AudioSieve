@@ -26,6 +26,7 @@ import runs
 import stft
 import ui_config
 import utils
+from analysis import backstage
 from analysis.waveform import waveform_json
 from effects import echo, eq_filter, flanger, reverb
 
@@ -85,6 +86,10 @@ EFFECTS = {
 # SEPARATION_MOCK=1: /process/separate returns the real contract, with
 # copies of the input as these stems, until the separation module is merged.
 SEPARATION_MOCK_STEMS = ("drums", "bass", "rest")
+
+# Backstage JSON is cached per run; bump this when its shape changes so
+# old caches are ignored.
+BACKSTAGE_VERSION = 1
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
@@ -619,6 +624,143 @@ def response_flanger():
         "delays_ms": delays_ms.round(4).tolist(),
         "mag_db": mag_db.round(1).tolist(),
     })
+
+
+# ---------------------------------------------------------------------
+# Backstage: analysis of one run (read-only; see analysis/backstage.py)
+# ---------------------------------------------------------------------
+
+def registered_run(run_id):
+    run = run_registry().get(run_id) if is_valid_id(run_id) else None
+    if run is None:
+        abort(404)
+    return run
+
+
+def run_input(run):
+    src = find_upload(run["file_id"])
+    if src is None:
+        abort(404)
+    return src
+
+
+def stem_files(run):
+    return [(s["name"], PROCESSED_DIR / s["file"]) for s in run["outputs"]["stems"]]
+
+
+def backstage_urls(run):
+    """Image and audio URLs for the run's panels."""
+    run_id = run["run_id"]
+    if run["tool"] == "separate":
+        return {
+            "images": {
+                "mixture": url_for("backstage_mixture", run_id=run_id),
+                "masks": {name: url_for("backstage_mask", run_id=run_id, stem=name)
+                          for name, _ in stem_files(run)},
+            },
+            "audio": {
+                "input": url_for("uploaded_audio", file_id=run["file_id"]),
+                "stems": {name: result_urls(path.stem) for name, path in stem_files(run)},
+            },
+        }
+    return {
+        # The before/after spectrograms saved when the run was processed.
+        "images": {
+            "before": url_for("result_spectrogram", result_id=run_id, kind="before"),
+            "after": url_for("result_spectrogram", result_id=run_id, kind="after"),
+            "diff": url_for("backstage_diff", run_id=run_id),
+        },
+        "audio": {
+            "input": url_for("uploaded_audio", file_id=run["file_id"]),
+            "output": result_urls(run_id),
+        },
+    }
+
+
+def write_atomic(path, text):
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+@app.get("/backstage/runs")
+def backstage_runs():
+    """Every registered run, newest first."""
+    return jsonify({"runs": run_registry().list()})
+
+
+@app.get("/backstage/<run_id>")
+def backstage_run(run_id):
+    """Analysis of one run: levels, envelopes, average spectra, the
+    difference stats, STFT settings and tool-specific extras, plus the
+    run itself and its image URLs. Computed once, then cached on disk."""
+    run = run_registry().get(run_id) if is_valid_id(run_id) else None
+    if run is None:
+        return error("Unknown run.", 404)
+    src = find_upload(run["file_id"])
+    if src is None:
+        return error("This run's input file is no longer on the server.", 404)
+
+    cache = PROCESSED_DIR / f"{run_id}.backstage-v{BACKSTAGE_VERSION}.json"
+    if cache.exists():
+        data = json.loads(cache.read_text(encoding="utf-8"))
+    else:
+        try:
+            if run["tool"] == "separate":
+                data = backstage.analyze_separation(run, src, stem_files(run))
+            else:
+                data = backstage.analyze_effect(
+                    run, src, PROCESSED_DIR / run["outputs"]["audio"],
+                    PROCESSED_DIR / f"{run_id}_diff.png",
+                )
+        except (OSError, RuntimeError) as e:  # includes soundfile's read errors
+            return error(f"Could not read this run's audio files ({e}).", 404)
+        write_atomic(cache, json.dumps(data))
+
+    return jsonify({"run": run, **data, **backstage_urls(run)})
+
+
+@app.get("/backstage/<run_id>/diff.png")
+def backstage_diff(run_id):
+    """Difference spectrogram of an effect run (cached after the first request)."""
+    run = registered_run(run_id)
+    if run["tool"] == "separate":
+        abort(404)
+    path = PROCESSED_DIR / f"{run_id}_diff.png"
+    if not path.exists():
+        backstage.render_diff(run_input(run), PROCESSED_DIR / run["outputs"]["audio"], path)
+    return send_file(path, mimetype="image/png")
+
+
+@app.get("/backstage/<run_id>/mixture.png")
+def backstage_mixture(run_id):
+    """Spectrogram of a separation run's mixture (cached)."""
+    run = registered_run(run_id)
+    if run["tool"] != "separate":
+        abort(404)
+    path = PROCESSED_DIR / f"{run_id}_mixture.png"
+    if not path.exists():
+        audio, sr = backstage.read(run_input(run))
+        backstage.save_mixture_png(backstage.mono(audio), sr, path)
+    return send_file(path, mimetype="image/png")
+
+
+@app.get("/backstage/<run_id>/mask/<stem>.png")
+def backstage_mask(run_id, stem):
+    """Mask heatmap |stem| / |mixture| of one separated stem (cached)."""
+    run = registered_run(run_id)
+    if run["tool"] != "separate":
+        abort(404)
+    files = dict(stem_files(run))
+    if stem not in files:
+        abort(404)
+    index = list(files).index(stem)  # the stem name is user-facing; the index names the file
+    path = PROCESSED_DIR / f"{run_id}_mask{index}.png"
+    if not path.exists():
+        mix, sr = backstage.read(run_input(run))
+        audio, _ = backstage.read(files[stem])
+        backstage.save_mask_png(backstage.mono(mix), backstage.mono(audio), sr, path)
+    return send_file(path, mimetype="image/png")
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ export function fmtHzTick(hz) {
 }
 
 export function fmtClock(unixSeconds) {
-  return new Date(unixSeconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return new Date(unixSeconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
 export class RequestError extends Error {

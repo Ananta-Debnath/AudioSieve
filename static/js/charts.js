@@ -126,6 +126,7 @@ export function lineOptions(c, { x, y, legend = false, mode = "index" }) {
               padding: 12,
               font: { size: 12 },
               filter: (item, data) => !data.datasets[item.datasetIndex].hideInLegend,
+              sort: (a, b) => a.datasetIndex - b.datasetIndex, // original first, whatever the draw order
             },
           }
         : { display: false },
@@ -144,6 +145,7 @@ export function lineOptions(c, { x, y, legend = false, mode = "index" }) {
         boxWidth: 10,
         boxHeight: 2,
         filter: (item) => !item.dataset.hideInTooltip,
+        itemSort: (a, b) => a.datasetIndex - b.datasetIndex,
         callbacks: {
           title: (items) => (items.length ? `${xFormat(items[0].parsed.x)} ${x.unit || ""}` : ""),
           label: (item) => `${item.dataset.label}: ${yFormat(item.parsed.y)} ${y.unit || ""}`,
@@ -153,7 +155,8 @@ export function lineOptions(c, { x, y, legend = false, mode = "index" }) {
   };
 }
 
-// One 2px trace. role: "before" (--fg-dim) | "after" (--accent)
+// One 2px trace. role: "before" (--fg-dim) | "after" (--accent). After
+// traces are drawn on top (Chart.js draws lower `order` last).
 export function trace(c, label, data, role = "after", extra = {}) {
   return {
     label,
@@ -162,6 +165,7 @@ export function trace(c, label, data, role = "after", extra = {}) {
     backgroundColor: role === "before" ? c.fgDim : c.accent,
     borderWidth: 2,
     pointRadius: 0,
+    order: role === "before" ? 2 : 1,
     ...extra,
   };
 }

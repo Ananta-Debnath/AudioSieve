@@ -2,11 +2,11 @@
 // last result while other tabs are open. The page never processes
 // audio: it sends parameters to the server and plays / plots what comes back.
 import { CONFIG, toolInfo } from "./config.js";
-import { ThemedChart, fmt, lineOptions, trace, xy } from "./charts.js";
 import { Segmented, Slider, field } from "./controls.js";
 import { Player, StemGroup } from "./player.js";
+import { ResponsePlot, responseQuery } from "./responses.js";
 import { SourceBox } from "./source.js";
-import { el, fmtClock, isVisible, requestJSON } from "./util.js";
+import { el, fmtClock, requestJSON } from "./util.js";
 
 const group = (label, ...content) => el("div", { class: "group" }, el("p", { class: "label" }, label), ...content);
 
@@ -31,15 +31,15 @@ class Tool {
 
     const canvas = root.querySelector("[data-response]");
     if (canvas) {
-      this.chart = new ThemedChart(canvas, (c, data) => this.responseChart(c, data));
       this.responseMsg = root.querySelector("[data-response-msg]");
       this.plotTools = root.querySelector("[data-plot-tools]");
+      this.plot = new ResponsePlot(canvas, this.id, { tools: this.plotTools, rate: () => this.values.rate_hz });
     }
 
     this.buildControls(root.querySelector("[data-params]"));
     this.showEmptyOutput();
     this.updateRunButton();
-    if (this.chart) this.refreshResponse(0);
+    if (this.plot) this.refreshResponse(0);
   }
 
   // ---- hooks for each tool ----------------------------------------
@@ -50,11 +50,7 @@ class Tool {
   }
 
   responseQuery() {
-    return this.params();
-  }
-
-  responseChart(_colors, _data) {
-    return null;
+    return responseQuery(this.id, this.values);
   }
 
   // ---- parameters and the live response plot ----------------------
@@ -73,7 +69,7 @@ class Tool {
   }
 
   refreshResponse(delay = CONFIG.responseDebounceMs) {
-    if (!this.chart) return;
+    if (!this.plot) return;
     clearTimeout(this.responseTimer);
     this.responseTimer = setTimeout(() => this.fetchResponse(), delay);
   }
@@ -86,7 +82,7 @@ class Tool {
       const data = await requestJSON(`/response/${this.id}?${new URLSearchParams(query)}`);
       if (seq !== this.responseSeq) return;
       this.responseMsg.hidden = true;
-      this.drawResponse(data, query);
+      this.plot.set(data, query);
     } catch (err) {
       if (seq !== this.responseSeq) return;
       this.responseMsg.textContent = err.message;
@@ -94,13 +90,9 @@ class Tool {
     }
   }
 
-  drawResponse(data, query) {
-    this.chart.set({ ...data, query });
-  }
-
   // Called when this tab becomes visible.
   shown() {
-    if (this.chart) this.chart.resize();
+    if (this.plot) this.plot.resize();
   }
 
   // ---- source and RUN ---------------------------------------------
@@ -290,20 +282,6 @@ class EqTool extends Tool {
   highlightPreset(name) {
     this.presetButtons.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.preset === name)));
   }
-
-  responseChart(c, { freqs, gain_db: gain, query }) {
-    const eqOnly = query.mode === "eq";
-    return {
-      type: "line",
-      data: { datasets: [trace(c, "Gain", xy(freqs, gain))] },
-      options: lineOptions(c, {
-        x: { type: "logarithmic", min: 20, max: 20000, title: "FREQUENCY (Hz)", format: fmt.hz, unit: "Hz" },
-        y: eqOnly
-          ? { min: -18, max: 18, step: 6, title: "GAIN (dB)", format: fmt.db, unit: "dB", zeroLine: true }
-          : { min: -60, max: 24, step: 12, title: "GAIN (dB)", format: fmt.db, unit: "dB", zeroLine: true },
-      }),
-    };
-  }
 }
 
 // ---------------------------------------------------------------------
@@ -325,18 +303,6 @@ class ReverbTool extends Tool {
     container.append(
       group("Room", cfg.sliders.map((spec) => this.slider(spec).root)),
       el("div", { class: "group" }, field("Convolution", circular.root), this.circularNote));
-  }
-
-  responseChart(c, { t, h }) {
-    const peak = h.reduce((m, v) => Math.max(m, Math.abs(v)), 0) || 1;
-    return {
-      type: "line",
-      data: { datasets: [trace(c, "h(t)", xy(t, h))] },
-      options: lineOptions(c, {
-        x: { min: 0, max: t[t.length - 1], title: "TIME (s)", format: fmt.s, unit: "s" },
-        y: { min: -peak, max: peak, suggested: true, title: "h(t) (LINEAR)", format: fmt.num, zeroLine: true },
-      }),
-    };
   }
 }
 
@@ -369,101 +335,17 @@ class EchoTool extends Tool {
   }
 
   responseQuery() {
-    const { delay_ms, gain, mode } = this.values;
-    return this.zoom ? { delay_ms, gain, mode, f_max: this.zoom } : { delay_ms, gain, mode };
-  }
-
-  responseChart(c, { freqs, mag_db: mag }) {
-    return {
-      type: "line",
-      data: { datasets: [trace(c, "|H|", xy(freqs, mag))] },
-      options: lineOptions(c, {
-        x: { min: 0, max: freqs[freqs.length - 1], title: "FREQUENCY (Hz)", format: fmt.hz, unit: "Hz" },
-        y: { min: -24, max: 24, step: 6, title: "|H| (dB)", format: fmt.db, unit: "dB", zeroLine: true },
-      }),
-    };
+    return responseQuery("echo", this.values, { echoZoom: this.zoom });
   }
 }
 
 // ---------------------------------------------------------------------
-// 04 Flanger: the comb's response at each delay of one sweep, played
-// back at the LFO rate.
+// 04 Flanger (the response plot animates the sweep; see responses.js)
 // ---------------------------------------------------------------------
 
 class FlangerTool extends Tool {
   buildControls(container) {
     container.append(group("Flanger", CONFIG.flanger.sliders.map((spec) => this.slider(spec).root)));
-
-    this.animating = !matchMedia("(prefers-reduced-motion: reduce)").matches;
-    this.phase = 0;
-    this.frameIndex = 0;
-    this.delayReadout = el("span", { class: "readout-inline" });
-    this.animButton = el("button", {
-      type: "button", class: "btn btn-small", onclick: () => this.setAnimating(!this.animating),
-    });
-    this.plotTools.append(this.delayReadout, this.animButton);
-    this.setAnimating(this.animating);
-  }
-
-  responseQuery() {
-    const { min_delay_ms: min, sweep_ms: sweep, gain } = this.values;
-    // The first few comb teeth at the longest delay.
-    const f_max = (CONFIG.flanger.plot_teeth * 1000) / (min + sweep);
-    return { min_delay_ms: min, sweep_ms: sweep, gain, f_max };
-  }
-
-  drawResponse(data, query) {
-    this.frames = data.mag_db.map((row) => xy(data.freqs, row));
-    this.delays = data.delays_ms;
-    this.frameIndex = Math.min(this.frameIndex, this.frames.length - 1);
-    super.drawResponse(data, query);
-    this.showDelay();
-    this.startLoop();
-  }
-
-  responseChart(c, { freqs }) {
-    return {
-      type: "line",
-      data: { datasets: [trace(c, "|H|", this.frames[this.frameIndex])] },
-      options: lineOptions(c, {
-        x: { min: 0, max: freqs[freqs.length - 1], title: "FREQUENCY (Hz)", format: fmt.hz, unit: "Hz" },
-        y: { min: -30, max: 10, step: 10, title: "|H| (dB)", format: fmt.db, unit: "dB", zeroLine: true },
-      }),
-    };
-  }
-
-  setAnimating(on) {
-    this.animating = on;
-    this.animButton.textContent = on ? "❚❚ Pause sweep" : "▶ Play sweep";
-    this.animButton.setAttribute("aria-pressed", String(on));
-    this.lastTick = null;
-  }
-
-  showDelay() {
-    if (!this.delays) return;
-    this.delayReadout.replaceChildren("D = ", el("b", {}, this.delays[this.frameIndex].toFixed(2)), " ms");
-  }
-
-  // One requestAnimationFrame loop for the page's lifetime; it only
-  // redraws while the tab is visible and the sweep is playing.
-  startLoop() {
-    if (this.loopStarted) return;
-    this.loopStarted = true;
-    const tick = (now) => {
-      requestAnimationFrame(tick);
-      const last = this.lastTick;
-      this.lastTick = now;
-      if (!this.animating || !this.frames || last === null || !isVisible(this.root)) return;
-      this.phase = (this.phase + ((now - last) / 1000) * this.values.rate_hz) % 1;
-      const index = Math.floor(this.phase * this.frames.length);
-      if (index === this.frameIndex || !this.chart.chart) return;
-      this.frameIndex = index;
-      this.chart.chart.data.datasets[0].data = this.frames[index];
-      this.chart.chart.update("none");
-      this.showDelay();
-    };
-    this.lastTick = null;
-    requestAnimationFrame(tick);
   }
 }
 
