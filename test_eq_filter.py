@@ -19,8 +19,10 @@ from effects import eq_filter
 INPUT_FILE = "Audio/sample-15s.wav"
 DURATION = 10  # seconds
 
-FRAME_SIZE = eq_filter.FRAME_SIZE
-HOP_SIZE = eq_filter.HOP_SIZE
+# Analysis frames for the spectrograms and band energies (eq_filter
+# processes with its own, much longer frames).
+FRAME_SIZE = 1024
+HOP_SIZE = 512
 
 CASES = {
     "lowpass_500": {"mode": "filter", "filter_type": "lowpass", "cutoff": 500, "order": 4},
@@ -91,7 +93,7 @@ def main():
     print(f"{'(dB change vs original)':<28}")
 
     for name, params in CASES.items():
-        freqs, curve = eq_filter.build_curve(sample_rate, params, FRAME_SIZE)
+        freqs, curve = eq_filter.build_curve(sample_rate, params)
         save_curve(freqs, curve, name, f"Spectograms/eq_curve_{name}.png")
 
         processed, _ = eq_filter.process(audio, sample_rate, params)

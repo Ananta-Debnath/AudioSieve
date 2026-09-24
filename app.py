@@ -34,7 +34,10 @@ MAX_DURATION_SEC = 6 * 60
 RESPONSE_SR = 44100
 MAX_PLOT_POINTS = 4000
 
-# Colour range of the before/after spectrograms (see save_spectrograms).
+# Before/after spectrograms: short frames for time detail (not the EQ's
+# long processing frames), and their colour range (see save_spectrograms).
+SPECTROGRAM_FRAME_SIZE = 1024
+SPECTROGRAM_HOP_SIZE = 512
 SPECTROGRAM_RANGE_DB = 90
 
 # Tool name (as used in /process/<tool>) -> effect module.
@@ -176,7 +179,7 @@ def echo_params(raw):
 
 def _mono_magnitude(audio):
     mono = audio.mean(axis=1) if audio.ndim == 2 else audio
-    spectra = stft.calculatr_stft(mono, eq_filter.FRAME_SIZE, eq_filter.HOP_SIZE)
+    spectra = stft.calculatr_stft(mono, SPECTROGRAM_FRAME_SIZE, SPECTROGRAM_HOP_SIZE)
     return utils.calculate_magnitude(spectra)
 
 
@@ -199,7 +202,7 @@ def save_spectrograms(before, after, sr, result_id):
     floor = max(mag.max() for mag in mags.values()) * 10 ** (-SPECTROGRAM_RANGE_DB / 20)
     for kind, mag in mags.items():
         utils.save_spectrogram(
-            np.maximum(mag, floor), sr, eq_filter.HOP_SIZE,
+            np.maximum(mag, floor), sr, SPECTROGRAM_HOP_SIZE,
             str(PROCESSED_DIR / f"{result_id}_{kind}.png"),
         )
 

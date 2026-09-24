@@ -10,8 +10,7 @@ the same for every frame):
 - eq: sum of per-band boost/cut shapes in dB (Gaussian peaks, low/high
   shelves), converted to linear gain.
 - both: the EQ curve and the filter curve multiplied together.
-- hum: narrow notches at a mains-hum frequency and its harmonics, on a
-  much longer frame (see HUM_FRAME_SIZE).
+- hum: narrow notches at a mains-hum frequency and its harmonics.
 """
 
 import numpy as np
@@ -19,8 +18,16 @@ import numpy as np
 import stft
 import utils
 
-FRAME_SIZE = 1024
-HOP_SIZE = 512
+# Frequency resolution is sr / FRAME_SIZE: ~0.67 Hz bins at 44.1 kHz.
+# Short frames buy time resolution, which the drum/bass masks need
+# because they change every frame; this curve never changes, so long
+# frames cost nothing (a click rings no longer than the filter itself
+# makes it) and the audio gets exactly the curve. With 1024-sample
+# frames (~43 Hz bins) everything below ~100 Hz was smeared: the 80 Hz
+# rumble filter cut 30 Hz by 18 dB instead of 34, and a 50 Hz hum notch
+# managed 4.5 dB instead of 48.
+FRAME_SIZE = 65536
+HOP_SIZE = FRAME_SIZE // 2
 
 MODES = ("eq", "filter", "both", "hum")
 FILTER_TYPES = ("lowpass", "highpass", "bandpass", "bandstop")
@@ -30,17 +37,9 @@ MAX_BAND_GAIN_DB = 15
 # Steepness of the shelf transition (same role as a filter order).
 SHELF_ORDER = 2
 
-# Hum notches are a few Hz wide, but FRAME_SIZE bins are sr / 1024
-# (~43 Hz) apart, far too coarse to cut one: a 50 Hz notch there only
-# reduces a 50 Hz tone by ~4.5 dB. Frequency resolution is sr /
-# frame_size, so hum mode uses a 64x longer frame: ~0.67 Hz bins at
-# 44.1 kHz. The price is time resolution (~1.5 s frames), which doesn't
-# matter here because the curve is flat everywhere except the notches.
-# Only the first and last ~0.5 s keep some hum: telling hum apart from
-# notes a few Hz away takes that much signal (true of any notch this
-# narrow, IIR ones included).
-HUM_FRAME_SIZE = 65536
-HUM_HOP_SIZE = HUM_FRAME_SIZE // 2
+# Hum notches are a few Hz wide. Only the first and last ~0.5 s keep
+# some hum: telling hum apart from notes a few Hz away takes that much
+# signal (true of any notch this narrow, IIR ones included).
 NOTCH_ORDER = 4
 
 # Hum parameter -> (min, max, default); the route validates against these.
@@ -56,8 +55,6 @@ HUM_PARAMS = {
 #   width at half maximum, in Hz.
 # - lowshelf / highshelf: boost/cut everything below / above 'center',
 #   reaching half the gain (in dB) at 'center'. 'bandwidth' is unused.
-# Bins are sr / FRAME_SIZE (~43 Hz) apart, so peak bands narrower than
-# ~150 Hz only touch a couple of bins and never reach their full gain.
 DEFAULT_BANDS = [
     {"name": "Bass", "type": "lowshelf", "center": 100, "gain_db": 0, "bandwidth": 150},
     {"name": "Low-mid", "type": "peak", "center": 350, "gain_db": 0, "bandwidth": 250},
@@ -280,22 +277,12 @@ def _hum_curve_from_params(freq_bins, sr, params):
     )
 
 
-def frame_and_hop(params):
-    """(frame_size, hop_size) for the params' mode: hum needs long frames."""
-    if resolve_params(params).get("mode") == "hum":
-        return HUM_FRAME_SIZE, HUM_HOP_SIZE
-    return FRAME_SIZE, HOP_SIZE
-
-
-def build_curve(sr, params, frame_size=None):
+def build_curve(sr, params, frame_size=FRAME_SIZE):
     """Build the gain curve for the rfft bins of one frame from params.
 
-    frame_size defaults to the mode's own (see frame_and_hop).
     Returns (freq_bins, curve).
     """
     params = resolve_params(params)
-    if frame_size is None:
-        frame_size, _ = frame_and_hop(params)
     freq_bins = np.fft.rfftfreq(frame_size, d=1 / sr)
     mode = params.get("mode", "eq")
 
@@ -353,16 +340,15 @@ def process(audio, sr, params):
     audio: float ndarray, shape (samples,) or (samples, channels).
     """
     audio = np.asarray(audio, dtype=np.float64)
-    frame_size, hop_size = frame_and_hop(params)
-    _, curve = build_curve(sr, params, frame_size)
-
-    def run(x):
-        return _process_channel(x, curve, frame_size, hop_size)
+    _, curve = build_curve(sr, params)
 
     if audio.ndim == 1:
-        out = run(audio)
+        out = _process_channel(audio, curve)
     else:
-        out = np.stack([run(audio[:, ch]) for ch in range(audio.shape[1])], axis=1)
+        out = np.stack(
+            [_process_channel(audio[:, ch], curve) for ch in range(audio.shape[1])],
+            axis=1,
+        )
 
     # EQ boosts can push peaks past full scale. Scale down instead of
     # letting the export clamp (distort) them; the clip is the same

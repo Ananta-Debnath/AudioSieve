@@ -200,12 +200,6 @@ def test_build_curve_rejects_bad_params(params):
         eq_filter.build_curve(SR, params)
 
 
-def test_hum_mode_uses_sub_hz_bins():
-    freqs, _ = eq_filter.build_curve(SR, {"preset": "remove_hum_50hz"})
-    assert len(freqs) == eq_filter.HUM_FRAME_SIZE // 2 + 1
-    assert freqs[1] < 1
-
-
 def test_hum_harmonics_must_stay_below_nyquist():
     params = {"mode": "hum", "hum_freq": 50, "harmonics": 10, "notch_width": 4}
     eq_filter.build_curve(SR, params)  # 500 Hz: fine
@@ -260,7 +254,7 @@ def test_hum_removal_removes_hum_and_keeps_music():
     tone = 0.1 * np.sin(2 * np.pi * 440 * t)
     out, _ = eq_filter.process(hum + tone, SR, {"preset": "remove_hum_50hz"})
 
-    # Away from the edges, where the hum is only partly removed (see HUM_FRAME_SIZE).
+    # Away from the first/last ~0.5 s, where the hum is only partly removed.
     mid = slice(SR, -SR)
     rms = lambda x: np.sqrt(np.mean(x ** 2))
     assert db(rms(out[mid] - tone[mid]) / rms(hum[mid])) < -40
@@ -295,8 +289,9 @@ PRESET_CLAIMS = [
     ("radio", 5000, -3.5, -2.5),
     ("radio", 12000, -inf, -10),
     # Cuts below 80 Hz, leaves the music's bass alone.
-    ("remove_rumble", 30, -inf, -15),
-    ("remove_rumble", 50, -inf, -10),
+    ("remove_rumble", 30, -inf, -30),
+    ("remove_rumble", 50, -inf, -15),
+    ("remove_rumble", 100, -1, 0.5),
     ("remove_rumble", 150, -0.5, 0.5),
     ("remove_rumble", 1000, -0.5, 0.5),
     # 50 Hz and its harmonics gone, everything in between untouched.
@@ -330,3 +325,25 @@ def test_preset_does_what_its_name_says(preset, freq, min_db, max_db):
 
 def test_every_preset_has_claims():
     assert {preset for preset, *_ in PRESET_CLAIMS} == set(eq_filter.PRESETS)
+
+
+HIGHPASS_20 = {"mode": "filter", "filter_type": "highpass", "cutoff": 20, "order": 4}
+
+
+# With 1024-sample frames (~43 Hz bins) the audio did not get the
+# plotted curve at low frequencies: the rumble preset gave 30 Hz -18 dB
+# instead of -34 dB, and a 20 Hz high-pass gave 10 Hz -8.5 dB instead of -24.
+@pytest.mark.parametrize("params, freq", [
+    pytest.param({"preset": "remove_rumble"}, 30, id="rumble-30Hz"),
+    pytest.param({"preset": "remove_rumble"}, 50, id="rumble-50Hz"),
+    pytest.param({"preset": "bass_boost"}, 40, id="bass_boost-40Hz"),
+    pytest.param({"preset": "telephone"}, 100, id="telephone-100Hz"),
+    pytest.param(HIGHPASS_20, 10, id="highpass_20-10Hz"),
+    pytest.param(HIGHPASS_20, 20, id="highpass_20-20Hz"),
+    pytest.param({"mode": "eq", "bands": eq_filter._eq_bands([0, 10, 0, 0, 0])}, 350,
+                 id="low_mid_peak-350Hz"),
+])
+def test_audio_gets_the_plotted_curve(params, freq):
+    freqs, curve = eq_filter.build_curve(SR, params)
+    expected = db(np.interp(freq, freqs, curve))
+    assert tone_gain_db(params, freq) == pytest.approx(expected, abs=0.5)
