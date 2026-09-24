@@ -20,7 +20,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 import stft
 import utils
-from effects import echo, eq_filter, reverb
+from effects import echo, eq_filter, flanger, reverb
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -33,6 +33,9 @@ MAX_DURATION_SEC = 6 * 60
 # /response/* plots depend only on the parameters, not on an upload.
 RESPONSE_SR = 44100
 MAX_PLOT_POINTS = 4000
+# The flanger plot is one curve per delay over a sweep, so fewer points each.
+FLANGER_PLOT_FRAMES = 48
+FLANGER_PLOT_POINTS = 600
 
 # Before/after spectrograms: short frames for time detail (not the EQ's
 # long processing frames), and their colour range (see save_spectrograms).
@@ -46,6 +49,7 @@ EFFECTS = {
     "eq": eq_filter,
     "reverb": reverb,
     "echo": echo,
+    "flanger": flanger,
 }
 
 app = Flask(__name__)
@@ -167,6 +171,19 @@ def reverb_params(raw):
     return {**ranged_params(raw, reverb.PARAMS), "circular": circular}
 
 
+def flanger_params(raw):
+    """min_delay_ms, sweep_ms, rate_hz, gain (see flanger.PARAMS)."""
+    return ranged_params(raw, flanger.PARAMS)
+
+
+def f_max_param(raw):
+    """Optional f_max (Hz) for the /response/* zoom; must be positive."""
+    f_max = _optional_float(raw, "f_max")
+    if f_max is not None and not f_max > 0:
+        raise ValueError("f_max must be positive.")
+    return f_max
+
+
 def echo_params(raw):
     """delay_ms, gain, mix (see echo.PARAMS) and mode."""
     mode = raw.get("mode") or "feedback"
@@ -222,6 +239,7 @@ def index():
         eq_hum_params=eq_filter.HUM_PARAMS,
         reverb_params=reverb.PARAMS,
         echo_params=echo.PARAMS,
+        flanger_params=flanger.PARAMS,
     )
 
 
@@ -302,7 +320,9 @@ def process_tool(tool):
             "gain_db": (20 * np.log10(np.maximum(curve, 1e-6))).round(2).tolist(),
         }
     else:
-        parse_params = {"reverb": reverb_params, "echo": echo_params}[tool]
+        parse_params = {
+            "reverb": reverb_params, "echo": echo_params, "flanger": flanger_params,
+        }[tool]
         try:
             params = parse_params(params)
         except (ValueError, TypeError) as e:
@@ -374,9 +394,7 @@ def response_echo():
     """
     try:
         params = echo_params(request.args)
-        f_max = _optional_float(request.args, "f_max")
-        if f_max is not None and not f_max > 0:
-            raise ValueError("f_max must be positive.")
+        f_max = f_max_param(request.args)
     except (ValueError, TypeError) as e:
         return error(f"Invalid echo parameters: {e}")
 
@@ -385,6 +403,31 @@ def response_echo():
         n_points=MAX_PLOT_POINTS, f_max=f_max,
     )
     return jsonify({"freqs": freqs.round(3).tolist(), "mag_db": mag_db.round(2).tolist()})
+
+
+@app.get("/response/flanger")
+def response_flanger():
+    """Frequency responses over one sweep, for ?min_delay_ms=&sweep_ms=&gain=,
+    as {"freqs": [Hz], "delays_ms": [...], "mag_db": [[...], ...]}, one
+    mag_db row per delay (the page animates through them).
+
+    Optional f_max (Hz) zooms into [0, f_max], as for /response/echo.
+    """
+    try:
+        params = flanger_params(request.args)
+        f_max = f_max_param(request.args)
+    except (ValueError, TypeError) as e:
+        return error(f"Invalid flanger parameters: {e}")
+
+    freqs, delays_ms, mag_db = flanger.flanger_frequency_response(
+        RESPONSE_SR, params["min_delay_ms"], params["sweep_ms"], params["gain"],
+        n_points=FLANGER_PLOT_POINTS, n_frames=FLANGER_PLOT_FRAMES, f_max=f_max,
+    )
+    return jsonify({
+        "freqs": freqs.round(3).tolist(),
+        "delays_ms": delays_ms.round(4).tolist(),
+        "mag_db": mag_db.round(1).tolist(),
+    })
 
 
 if __name__ == "__main__":

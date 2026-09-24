@@ -1,4 +1,4 @@
-"""Tests for effects/reverb.py, effects/echo.py and their routes.
+"""Tests for effects/reverb.py, effects/echo.py, effects/flanger.py and their routes.
 
 Run with: python -m pytest tests -m "not slow"  (drop -m to include the
 performance test). np.convolve and per-sample loops appear here only as
@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from effects import echo, reverb
+from effects import echo, flanger, reverb
 
 SR = 8000
 
@@ -265,6 +265,74 @@ def test_frequency_response_matches_dft_of_impulse_response(mode):
 
 
 # ---------------------------------------------------------------------
+# Flanger
+# ---------------------------------------------------------------------
+
+def flanger_tail(min_delay_ms, sweep_ms):
+    return int(np.ceil((min_delay_ms + sweep_ms) / 1000 * SR))
+
+
+def test_sweep_follows_the_lfo():
+    delays = flanger.sweep_delay_ms(np.array([0, 0.25, 0.5, 0.75, 1]), 1, 3)
+    assert np.allclose(delays, [1, 2.5, 4, 2.5, 1])
+
+
+def test_fractional_delay_interpolates_between_samples():
+    x = np.arange(1.0, 11.0)
+    out = flanger.fractional_delay(x, np.full(10, 2.5))
+    assert np.allclose(out[:2], 0)          # reads before the start
+    assert out[2] == pytest.approx(0.5)     # halfway between "x[-1]" = 0 and x[0] = 1
+    assert np.allclose(out[3:], x[3:] - 2.5)
+
+
+def test_flanger_without_sweep_is_the_feedforward_echo():
+    x = noise(2000)
+    out = flanger.apply_flanger(x, SR, min_delay_ms=2, sweep_ms=0, gain=0.5)  # 16 samples
+    expected = echo.feedforward_comb(np.pad(x, (0, 16)), 16, 0.5)
+    assert np.allclose(out, expected)
+
+
+def test_flanger_gain_zero_is_dry_plus_tail():
+    x = noise(SR)
+    out = flanger.apply_flanger(x, SR, gain=0)
+    assert len(out) == SR + flanger_tail(1, 3)
+    assert np.allclose(out[:SR], x) and np.allclose(out[SR:], 0)
+
+
+def test_flanger_stereo_keeps_channels():
+    out = flanger.apply_flanger(noise((SR, 2)), SR, min_delay_ms=1, sweep_ms=3)
+    assert out.shape == (SR + flanger_tail(1, 3), 2)
+
+
+def test_flanger_never_clips():
+    out = flanger.apply_flanger(noise(SR, scale=0.9), SR, gain=1)
+    assert np.max(np.abs(out)) <= 1.0
+
+
+@pytest.mark.parametrize("gain", [0.5, 0.9])
+def test_flanger_response_matches_dft_of_impulse_response(gain):
+    # With no sweep every frame is the same fixed comb.
+    n_points = 257
+    ir = flanger.apply_flanger(impulse(2 * (n_points - 1)), SR, min_delay_ms=2,
+                               sweep_ms=0, gain=gain)[:2 * (n_points - 1)]
+    _, delays_ms, mag_db = flanger.flanger_frequency_response(
+        SR, 2, 0, gain, n_points=n_points, n_frames=4)
+    assert np.allclose(delays_ms, 2)
+    for row in mag_db:
+        assert np.allclose(row, 20 * np.log10(np.abs(np.fft.rfft(ir))), atol=1e-9)
+
+
+def test_flanger_notches_move_with_the_delay():
+    # Frames at sweep phase 0, 1/4, 1/2, 3/4: D = 1, 2.5, 4, 2.5 ms.
+    freqs, delays_ms, mag_db = flanger.flanger_frequency_response(
+        SR, 1, 3, 1.0, n_points=4001, n_frames=4)  # 1 Hz steps
+    assert np.allclose(delays_ms, [1, 2.5, 4, 2.5])
+    for d, row in zip(delays_ms, mag_db):
+        first_notch = 1000 / (2 * d)  # Hz
+        assert row[np.argmin(np.abs(freqs - first_notch))] < -60
+
+
+# ---------------------------------------------------------------------
 # No black-box effect implementations
 # ---------------------------------------------------------------------
 
@@ -338,6 +406,23 @@ def test_echo_route_uses_mode_and_delay(client):
     assert out.shape == (SR + echo.delay_samples(SR, 100),)
 
 
+def test_flanger_route(client):
+    file_id = upload(client, noise((SR, 2)), SR)
+    out, _ = process(client, "flanger", file_id, min_delay_ms=2, sweep_ms=5, rate_hz=1)
+    assert out.shape == (SR + flanger_tail(2, 5), 2)
+
+
+def test_flanger_response_route(client):
+    res = client.get("/response/flanger?min_delay_ms=1&sweep_ms=3&gain=0.9&f_max=2500")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert set(data) == {"freqs", "delays_ms", "mag_db"}
+    assert len(data["delays_ms"]) == len(data["mag_db"]) > 1
+    assert all(len(row) == len(data["freqs"]) for row in data["mag_db"])
+    assert min(data["delays_ms"]) == 1 and max(data["delays_ms"]) <= 4
+    assert data["freqs"][-1] == pytest.approx(2500)
+
+
 @pytest.mark.parametrize("tool, params", [
     ("reverb", {"rt60": 10}),
     ("reverb", {"wet": -0.1}),
@@ -347,6 +432,8 @@ def test_echo_route_uses_mode_and_delay(client):
     ("echo", {"mode": "pingpong"}),
     ("eq", {"mode": "hum", "hum_freq": 100}),
     ("eq", {"mode": "hum", "harmonics": 2.5}),
+    ("flanger", {"gain": 1.5}),
+    ("flanger", {"min_delay_ms": 0}),
 ])
 def test_process_routes_reject_bad_params(client, tool, params):
     file_id = upload(client, noise(SR), SR)
@@ -359,6 +446,7 @@ def test_process_routes_reject_bad_params(client, tool, params):
     ("eq", {"mode": "hum"}),
     ("reverb", {"rt60": 0.5}),
     ("echo", {"delay_ms": 100}),
+    ("flanger", {"sweep_ms": 2}),
 ])
 def test_process_routes_return_before_after_spectrograms(client, tool, params):
     file_id = upload(client, noise(SR), SR)
@@ -408,6 +496,8 @@ def test_echo_response_route(client, query, f_max):
     "/response/echo?gain=1.5",
     "/response/echo?mode=pingpong",
     "/response/echo?f_max=-10",
+    "/response/flanger?sweep_ms=20",
+    "/response/flanger?f_max=-1",
 ])
 def test_response_routes_reject_bad_params(client, url):
     assert client.get(url).status_code == 400
@@ -426,6 +516,7 @@ def six_minutes_stereo():
 @pytest.mark.parametrize("effect, params", [
     (reverb.apply_reverb, {"rt60": 5.0, "pre_delay_ms": 100}),     # longest IR
     (echo.apply_echo, {"delay_ms": 20, "gain": 0.9}),              # most feedback blocks
+    (flanger.apply_flanger, {"min_delay_ms": 10, "sweep_ms": 10, "rate_hz": 5}),
 ])
 def test_six_minutes_of_stereo_takes_under_5_seconds(six_minutes_stereo, effect, params):
     audio, sr = six_minutes_stereo

@@ -25,10 +25,12 @@
     <button type="button" data-tab="eq">EQ + Filter</button>
     <button type="button" data-tab="reverb">Reverb</button>
     <button type="button" data-tab="echo">Echo + Delay</button>
+    <button type="button" data-tab="flanger">Flanger</button>
   </nav>
 
   {% for tool, title in [("separate", "Separation"), ("eq", "EQ + Filter"),
-                         ("reverb", "Reverb"), ("echo", "Echo + Delay")] %}
+                         ("reverb", "Reverb"), ("echo", "Echo + Delay"),
+                         ("flanger", "Flanger")] %}
   <section class="panel" id="panel-{{ tool }}" {% if not loop.first %}hidden{% endif %}>
     <h2>{{ title }}</h2>
     <form data-tool="{{ tool }}">
@@ -112,6 +114,17 @@
                                        ("mix", "Mix (0 = dry, 1 = full echo)", 0.05)]) }}
       </fieldset>
       <h3>Frequency response (first 10 comb teeth)</h3>
+      <canvas class="response" width="680" height="220"></canvas>
+      {% elif tool == "flanger" %}
+      <fieldset>
+        <legend>Flanger, y[n] = x[n] + g&middot;x[n&minus;D(n)], with D(n) sweeping
+          from the minimum delay to minimum + sweep and back</legend>
+        {{ number_inputs(flanger_params, [("min_delay_ms", "Minimum delay (ms)", 0.1),
+                                          ("sweep_ms", "Sweep (ms)", 0.1),
+                                          ("rate_hz", "Sweeps per second (Hz)", 0.05),
+                                          ("gain", "Gain g (1 = full cancellation at the notches)", 0.05)]) }}
+      </fieldset>
+      <h3>Frequency response over one sweep (animated)</h3>
       <canvas class="response" width="680" height="220"></canvas>
       {% endif %}
       <button type="submit">Process</button>

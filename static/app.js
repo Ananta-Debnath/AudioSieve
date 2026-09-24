@@ -95,8 +95,23 @@ function drawPlot(canvas, xs, ys, { xUnit, yUnit, yRange: [yMin, yMax] }) {
   ctx.stroke();
 }
 
-// Reverb IR / echo frequency response depend only on the parameters,
-// so they are fetched and redrawn live as the form changes (no upload).
+// Loop draw(frameIndex) over nFrames frames, once every `period` seconds.
+// A new call on the same canvas replaces the previous loop. Frames are
+// skipped while the canvas is hidden (another tab is open).
+function animate(canvas, nFrames, period, draw) {
+  cancelAnimationFrame(canvas.animation);
+  const start = performance.now();
+  const tick = (now) => {
+    const phase = ((now - start) / 1000 / period) % 1;
+    if (canvas.offsetParent) draw(Math.floor(phase * nFrames));
+    canvas.animation = requestAnimationFrame(tick);
+  };
+  canvas.animation = requestAnimationFrame(tick);
+}
+
+// Reverb IR / echo / flanger frequency responses depend only on the
+// parameters, so they are fetched and redrawn live as the form changes
+// (no upload).
 const COMB_TEETH = 10;
 const RESPONSE_PLOTS = {
   reverb: {
@@ -118,6 +133,19 @@ const RESPONSE_PLOTS = {
     draw: (canvas, { freqs, mag_db }) =>
       drawPlot(canvas, freqs, mag_db, { xUnit: " Hz", yUnit: " dB", yRange: [-24, 24] }),
   },
+  flanger: {
+    // One curve per delay over a sweep; show the first few teeth at the
+    // longest delay, and play the curves back at the sweep rate.
+    query: (f) => ({
+      min_delay_ms: f.min_delay_ms.value,
+      sweep_ms: f.sweep_ms.value,
+      gain: f.gain.value,
+      f_max: (COMB_TEETH * 1000) / (+f.min_delay_ms.value + +f.sweep_ms.value),
+    }),
+    draw: (canvas, { freqs, mag_db }, f) =>
+      animate(canvas, mag_db.length, 1 / f.rate_hz.value, (i) =>
+        drawPlot(canvas, freqs, mag_db[i], { xUnit: " Hz", yUnit: " dB", yRange: [-30, 10] })),
+  },
 };
 
 document.querySelectorAll("form[data-tool]").forEach((form) => {
@@ -132,7 +160,7 @@ document.querySelectorAll("form[data-tool]").forEach((form) => {
     const request = ++latest;
     const res = await fetch(`/response/${form.dataset.tool}?${new URLSearchParams(plot.query(form.elements))}`);
     if (!res.ok || request !== latest) return; // invalid params, or a newer request is in flight
-    plot.draw(canvas, await res.json());
+    plot.draw(canvas, await res.json(), form.elements);
   };
   form.addEventListener("input", () => {
     clearTimeout(timer);
