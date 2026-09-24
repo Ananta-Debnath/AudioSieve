@@ -91,7 +91,7 @@ def main():
 
     B, G = semi_supervised_nmf.separate_sources_nmf(
         X=magnitude.T,
-        num_components=20,
+        num_components=16,
     )
 
     print(f"B.shape: {B.shape}")
@@ -109,13 +109,13 @@ def main():
     )
     nmf_mag = nmf_mag.T
 
-    nmf.save_nmf_visualizations(
-        B,
-        G,
-        sample_rate=44100,
-        n_fft=1024,
-        output_dir="Spectograms/nmf"
-    )
+    # nmf.save_nmf_visualizations(
+    #     B,
+    #     G,
+    #     sample_rate=44100,
+    #     n_fft=1024,
+    #     output_dir="Spectograms/nmf"
+    # )
 
     df = nmf.analyze_nmf_components(
         B,
@@ -133,13 +133,18 @@ def main():
     # -------------------------
     # Separation
     # -------------------------
+    PERCUSSION_THRESHOLD = 0.25
+    BASS_THRESHOLD = 0.6
+    HARMONIC_THRESHOLD = 0.55
 
     # percussion
-    comp_dict["drum"] = df.sort_values(by="percussion_score", ascending=False).head(2).index.tolist()
-    print(f"drum_comp: {comp_dict['drum']}")
+    # comp_dict["percussion"] = df.sort_values(by="percussion_score", ascending=False).head(2).index.tolist()
+    comp_dict["percussion"] = df[df["percussion_score"] > PERCUSSION_THRESHOLD].index.tolist()
+    print(f"percussion_comp: {comp_dict['percussion']}")
 
     # bass
-    comp_dict["bass"] = df.sort_values(by="bass_score", ascending=False).head(3).index.tolist()
+    # comp_dict["bass"] = df.sort_values(by="bass_score", ascending=False).head(3).index.tolist()
+    comp_dict["bass"] = df[df["bass_score"] > BASS_THRESHOLD].index.tolist()
     print(f"bass_comp: {comp_dict['bass']}")
 
     # # vocal
@@ -147,7 +152,8 @@ def main():
     # print(f"vocal_comp: {comp_dict['vocal']}")
 
     # harmonic
-    comp_dict["harmonic"] = df.sort_values(by="harmonic_score", ascending=False).head(6).index.tolist()
+    # comp_dict["harmonic"] = df.sort_values(by="harmonic_score", ascending=False).head(6).index.tolist()
+    comp_dict["harmonic"] = df[df["harmonic_score"] > HARMONIC_THRESHOLD].index.tolist()
     print(f"harmonic_comp: {comp_dict['harmonic']}")
 
     comp_used = sum(comp_dict.values(), [])
