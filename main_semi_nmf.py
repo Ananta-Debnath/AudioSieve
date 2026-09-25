@@ -7,6 +7,8 @@ import semi_supervised_nmf
 import nmf_sep
 
 def main():
+    print("Starting NMF-based source separation...")
+    print()
     # -------------------------
     # Configuration
     # -------------------------
@@ -270,50 +272,32 @@ def main():
     # )
 
     reconstructed_audio = sum(audio_dict.values())
+    output_file = audio_filename("reconstructed")
     utils.save_audio(
-        audio_filename("reconstructed"),
+        output_file,
         sample_rate,
         reconstructed_audio
     )
 
-    # error = audio - reconstructed_audio
+    utils.save_nmf_analysis(
+        df,
+        output_file="Spectrograms/nmf/nmf_analysis.csv"
+    )
 
-    # print()
-    # print("Max error:", np.max(np.abs(error)))
-    # print("RMSE:", np.sqrt(np.mean(error**2)))
-    # print()
-
-    # mask_sum = sum(mask_dict.values())
-    # mask_diff = mask_sum - np.ones_like(mask_sum)
-    # print("Max mask sum:", np.max(mask_sum))
-    # print("Min mask sum:", np.min(mask_sum))
-    # print("Max mask diff:", np.max(mask_diff))
-    # print("Min mask diff:", np.min(mask_diff))
-    # print()
+    # Make audio from all components
+    utils.save_all_component_audio(
+        B, G, spectra,
+        sample_rate=sample_rate,
+        frame_size=frame_size,
+        hop_size=hop_size,
+        output_dir="Audio/nmf"
+    )
+    print()
 
     print("Done!")
     print("Original:", input_file)
     print("Reconstructed:", output_file)
     print("Spectrogram:", spectogram_filename())
-
-    utils.save_nmf_analysis(df)
-
-    # Make audio from all components
-    masks = utils.nmf_component_masks(B, G)
-
-    for mask_index, mask in enumerate(masks):
-
-        spectra_dict[f"component_{mask_index}"] = spectra * mask
-
-        audio = stft.calculate_istft(spectra_dict[f"component_{mask_index}"])
-
-        audio *= 5
-
-        utils.save_audio(
-            audio_filename(f"nmf/component_{mask_index}"),
-            sample_rate,
-            audio
-        )
 
 if __name__ == "__main__":
     main()

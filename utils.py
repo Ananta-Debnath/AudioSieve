@@ -3,6 +3,8 @@ from scipy.io import wavfile
 import matplotlib.pyplot as plt
 import os
 
+import stft
+
 
 def load_audio(filename, duration=None):
     """Load audio and return sample rate and mono audio.
@@ -423,7 +425,26 @@ def nmf_component_masks(W, H, power=2, epsilon=1e-10):
     return masks
 
 
-def save_nmf_analysis(df, output_file="Spectograms/nmf_component_analysis.csv"):
+def save_all_component_audio(B, G, spectra, sample_rate, frame_size, hop_size, output_dir="Audio/nmf"):
+    masks = nmf_component_masks(B, G)
+    
+    for mask_index, mask in enumerate(masks):
+
+        spectra_comp = spectra * mask
+
+        audio = stft.calculate_istft(spectra_comp, frame_size, hop_size)
+
+        audio *= 5
+
+        save_audio(
+            os.path.join(output_dir, f"component_{mask_index:02d}.wav"),
+            sample_rate,
+            audio
+        )
+
+    print(f"All component audio saved to: {output_dir}")
+
+def save_nmf_analysis(df, output_file="Spectrograms/nmf_component_analysis.csv"):
 
     df.to_csv(
         output_file,
