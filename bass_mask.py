@@ -1,7 +1,5 @@
 import numpy as np
 
-from drum_mask import smooth_mask_frequency
-
 
 def create_bass_mask_bandlimit(
     spectra,

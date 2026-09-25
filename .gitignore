@@ -1,11 +1,32 @@
-__pycache__
-.vscode
-Audio
-Spectrograms
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments (run.sh / run.bat create .venv)
+.venv/
+venv/
+env/
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
 tempCodeRunnerFile.py
+
+# Separation experiments: generated audio, plots and tables
+# (main_semi_nmf.py and friends write these)
+/Audio/
+/Spectrograms/
+/Spectograms/
+/nmf/
+/component_spectrograms/
 Comp_30
 
-# Flask app runtime files
-uploads/
-processed/
-.DS_Store
+# Flask app runtime files: uploads and results
+/uploads/
+/processed/
+
+# Everything under static/ (demo track, landing assets, vendored
+# scripts, fonts) is needed at runtime and stays tracked.
