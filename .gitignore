@@ -8,3 +8,4 @@ Comp_30
 # Flask app runtime files
 uploads/
 processed/
+.DS_Store

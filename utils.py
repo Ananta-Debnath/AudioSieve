@@ -1,10 +1,15 @@
 import numpy as np
 from scipy.io import wavfile
 import matplotlib.pyplot as plt
+import os
+
+import stft
 
 
-def load_audio(filename, duration=5):
-    """Load audio and return sample rate and mono audio."""
+def load_audio(filename, duration=None):
+    """Load audio and return sample rate and mono audio.
+    If duration is None, loads the full audio.
+    """
     sample_rate, audio = wavfile.read(filename)
 
     # Convert stereo → mono
@@ -19,8 +24,9 @@ def load_audio(filename, duration=5):
     if max_value > 0:
         audio /= max_value
 
-    # Keep only the requested duration
-    audio = audio[:int(duration * sample_rate)]
+    # Keep only the requested duration if specified
+    if duration is not None:
+        audio = audio[:int(duration * sample_rate)]
 
     return sample_rate, audio
 
@@ -157,3 +163,295 @@ def save_mask(mask, sample_rate, hop_size, filename):
     )
 
     plt.close()
+
+
+def save_nmf_visualizations(W, H, sample_rate, n_fft, output_dir="nmf"):
+    """
+    Save visualizations of NMF results.
+
+    Saves:
+        1. W_frequency_profiles.png
+        2. H_time_activations.png
+        3. component_XX.png for every NMF component
+    """
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    n_components = W.shape[1]
+
+    # --------------------------------------------------
+    # W: Frequency profiles
+    # --------------------------------------------------
+
+    frequencies = np.linspace(
+        0,
+        sample_rate / 2,
+        W.shape[0]
+    )
+
+    plt.figure(figsize=(16, 7))
+
+    for k in range(n_components):
+        plt.plot(
+            frequencies,
+            W[:, k],
+            label=f"Component {k}"
+        )
+
+    plt.xlabel("Frequency (Hz)")
+    plt.ylabel("Activation")
+    plt.title("NMF Frequency Profiles (W)")
+
+    plt.legend(
+        bbox_to_anchor=(1.02, 1),
+        loc="upper left",
+        fontsize=8
+    )
+
+    plt.tight_layout()
+
+    plt.savefig(
+        os.path.join(output_dir, "W_frequency_profiles.png"),
+        dpi=150,
+        bbox_inches="tight"
+    )
+
+    plt.close()
+
+    # --------------------------------------------------
+    # W: Individual component plots
+    # --------------------------------------------------
+
+    individual_dir = os.path.join(output_dir, "W_indiv")
+    os.makedirs(individual_dir, exist_ok=True)
+
+    for k in range(n_components):
+
+        plt.figure(figsize=(12, 6))
+
+        plt.plot(
+            frequencies,
+            W[:, k]
+        )
+
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Activation")
+        plt.title(f"NMF Frequency Profile - Component {k}")
+
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(
+                individual_dir,
+                f"component_{k:02d}.png"
+            ),
+            dpi=150
+        )
+
+        plt.close()
+
+    # --------------------------------------------------
+    # W: Individual component plots
+    # --------------------------------------------------
+
+    individual_dir = os.path.join(output_dir, "W_log_indiv")
+    os.makedirs(individual_dir, exist_ok=True)
+
+    for k in range(n_components):
+
+        plt.figure(figsize=(12, 6))
+
+        plt.plot(
+            frequencies,
+            W[:, k]
+        )
+
+        plt.xlabel("Frequency (Hz)")
+        plt.xscale("symlog", linthresh=1000)
+        plt.ylabel("Activation")
+        plt.title(f"NMF Frequency Profile - Component {k}")
+
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(
+                individual_dir,
+                f"component_{k:02d}.png"
+            ),
+            dpi=150
+        )
+
+        plt.close()
+
+
+    # --------------------------------------------------
+    # H: Time activations
+    # --------------------------------------------------
+
+    plt.figure(figsize=(14, 7))
+
+    plt.imshow(
+        H,
+        aspect="auto",
+        origin="lower",
+        interpolation="nearest"
+    )
+
+    plt.xlabel("Time Frame")
+    plt.ylabel("NMF Component")
+    plt.title("NMF Time Activations (H)")
+    plt.colorbar(label="Activation")
+
+    plt.tight_layout()
+
+    plt.savefig(
+        os.path.join(output_dir, "H_time_activations.png"),
+        dpi=150
+    )
+
+    plt.close()
+
+    # --------------------------------------------------
+    # H: Individual component plots
+    # --------------------------------------------------
+
+    individual_dir = os.path.join(output_dir, "H_indiv")
+    os.makedirs(individual_dir, exist_ok=True)
+
+    for k in range(n_components):
+        plt.figure(figsize=(12, 6))
+
+        # Assuming 'times' is your time array and H is shape (n_components, n_frames)
+        plt.plot(
+            range(H.shape[1]),  # Time frames
+            H[k, :] 
+        )
+
+        plt.xlabel("Time Frame")
+        # Changed y-label to reflect what the y-axis actually represents (magnitude/amplitude)
+        plt.ylabel("Activation Amplitude") 
+        
+        # Added the 'f' prefix here
+        plt.title(f"NMF Time Activations (H) - Component {k}")
+
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(
+                individual_dir,
+                f"component_{k:02d}.png"
+            ),
+            dpi=150
+        )
+
+        plt.close()
+
+
+    # --------------------------------------------------
+    # Individual components
+    # --------------------------------------------------
+
+    individual_dir = os.path.join(output_dir, "V_indiv")
+    os.makedirs(individual_dir, exist_ok=True)
+
+    for k in range(n_components):
+
+        component = np.outer(
+            W[:, k],
+            H[k, :]
+        )
+
+        plt.figure(figsize=(14, 6))
+
+        plt.imshow(
+            component,
+            aspect="auto",
+            origin="lower",
+            interpolation="nearest"
+        )
+
+        plt.xlabel("Time Frame")
+        plt.ylabel("Frequency Bin")
+        plt.title(f"NMF Component {k}")
+
+        plt.colorbar(label="Magnitude")
+
+        plt.tight_layout()
+
+        plt.savefig(
+            os.path.join(
+                individual_dir,
+                f"component_{k:02d}.png"
+            ),
+            dpi=150
+        )
+
+        plt.close()
+
+    print(f"NMF visualizations saved to: {output_dir}")
+
+
+def nmf_component_masks(W, H, power=2, epsilon=1e-10):
+    """
+    Generate soft masks for all NMF components.
+
+    Returns
+    -------
+    masks : np.ndarray
+        Shape: (components, time_frames, frequency_bins)
+    """
+
+    # W: (frequency, components)
+    # H: (components, time)
+
+    components = W[:, :, None] * H[None, :, :]
+
+    # Raise component magnitudes to a power
+    components = components ** power
+
+    # Sum across components
+    total = np.sum(components, axis=1, keepdims=True)
+
+    # Soft masks
+    masks = components / (total + epsilon)
+
+    # Convert:
+    # (frequency, components, time)
+    # →
+    # (components, time, frequency)
+
+    masks = masks.transpose(1, 2, 0)
+
+    return masks
+
+
+def save_all_component_audio(B, G, spectra, sample_rate, frame_size, hop_size, output_dir="Audio/nmf"):
+    masks = nmf_component_masks(B, G)
+    
+    for mask_index, mask in enumerate(masks):
+
+        spectra_comp = spectra * mask
+
+        audio = stft.calculate_istft(spectra_comp, frame_size, hop_size)
+
+        audio *= 5
+
+        save_audio(
+            os.path.join(output_dir, f"component_{mask_index:02d}.wav"),
+            sample_rate,
+            audio
+        )
+
+    print(f"All component audio saved to: {output_dir}")
+
+def save_nmf_analysis(df, output_file="Spectrograms/nmf_component_analysis.csv"):
+
+    df.to_csv(
+        output_file,
+        index=False,
+        float_format='%.7f'
+    )
+
+    print(
+        f"\nComponent analysis saved to: {output_file}"
+    )

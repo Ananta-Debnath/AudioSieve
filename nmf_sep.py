@@ -1,247 +1,781 @@
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
 
 
-def rank_bass_components(df):
+
+def analyze_nmf_components(W, H, sample_rate, n_fft):
     """
-    Rank NMF components by how bass-like they are.
+    Analyze NMF components using signal-processing features.
 
     Parameters
     ----------
-    df : pandas.DataFrame
-        DataFrame containing component-level NMF features.
+    W : np.ndarray
+        NMF frequency profiles.
+        Shape: (frequency_bins, components)
+
+    H : np.ndarray
+        NMF time activations.
+        Shape: (components, time_frames)
+
+    sample_rate : int
+        Audio sample rate.
+
+    n_fft : int
+        FFT size used for the STFT.
 
     Returns
     -------
-    pandas.DataFrame
-        Copy of df with a 'bass_score' column, sorted from
-        most bass-like to least bass-like.
+    df : pandas.DataFrame
+        Feature table for every NMF component.
     """
 
-    df = df.copy()
+    n_freqs, n_components = W.shape
 
-    # ---------------------------------------------------------
-    # Normalize helper
-    # ---------------------------------------------------------
-    def normalize(series):
-        minimum = series.min()
-        maximum = series.max()
+    # --------------------------------------------------
+    # Frequency axis
+    # --------------------------------------------------
 
-        if maximum == minimum:
-            return pd.Series(0.5, index=series.index)
+    frequencies = np.linspace(
+        0,
+        sample_rate / 2,
+        n_freqs
+    )
 
-        return (series - minimum) / (maximum - minimum)
+    results = []
 
-    # ---------------------------------------------------------
-    # Normalize relevant features
-    # ---------------------------------------------------------
-    bass_ratio = normalize(df["bass_ratio"])
-    low_ratio = normalize(df["low_ratio"])
-    centroid = normalize(df["spectral_centroid"])
-    harmonicity = normalize(df["harmonicity"])
-    sustain = normalize(df["sustain"])
-    transientness = normalize(df["transientness"])
+    for k in range(n_components):
 
-    # ---------------------------------------------------------
-    # Bass score
-    #
-    # Higher:
-    #   bass_ratio
-    #   low_ratio
-    #   harmonicity
-    #   sustain
-    #
-    # Lower:
-    #   spectral centroid
-    #   transientness
-    # ---------------------------------------------------------
-    df["bass_score"] = (
-        0.30 * bass_ratio +
+        # --------------------------------------------------
+        # Component data
+        # --------------------------------------------------
+
+        spectrum = W[:, k].astype(float)
+        activation = H[k, :].astype(float)
+
+        # Avoid numerical problems
+        spectrum += 1e-12
+        activation += 1e-12
+
+        # --------------------------------------------------
+        # Normalize frequency profile
+        # --------------------------------------------------
+
+        spectrum_norm = spectrum / np.sum(spectrum)
+
+        # --------------------------------------------------
+        # Total energy
+        # --------------------------------------------------
+
+        total_energy = np.sum(spectrum)
+
+        # --------------------------------------------------
+        # Low-frequency energy
+        # --------------------------------------------------
+
+        low_mask = frequencies < 250
+
+        bass_mask = frequencies < 150
+
+        high_mask = frequencies > 4000
+
+        low_ratio = (
+            np.sum(spectrum[low_mask])
+            / total_energy
+        )
+
+        bass_ratio = (
+            np.sum(spectrum[bass_mask])
+            / total_energy
+        )
+
+        high_ratio = (
+            np.sum(spectrum[high_mask])
+            / total_energy
+        )
+
+        # --------------------------------------------------
+        # Spectral centroid
+        # --------------------------------------------------
+
+        centroid = np.sum(
+            frequencies * spectrum_norm
+        )
+
+        # --------------------------------------------------
+        # Spectral bandwidth
+        # --------------------------------------------------
+
+        bandwidth = np.sqrt(
+            np.sum(
+                ((frequencies - centroid) ** 2)
+                * spectrum_norm
+            )
+        )
+
+        # --------------------------------------------------
+        # Spectral flatness
+        #
+        # geometric mean / arithmetic mean
+        #
+        # close to 1 = noise-like
+        # close to 0 = tonal
+        # --------------------------------------------------
+
+        geometric_mean = np.exp(
+            np.mean(np.log(spectrum))
+        )
+
+        arithmetic_mean = np.mean(spectrum)
+
+        flatness = (
+            geometric_mean
+            / (arithmetic_mean + 1e-12)
+        )
+
+        # --------------------------------------------------
+        # Spectral peakiness
+        # --------------------------------------------------
+
+        peakiness = (
+            np.max(spectrum)
+            / (np.mean(spectrum) + 1e-12)
+        )
+
+        # --------------------------------------------------
+        # Activation features
+        # --------------------------------------------------
+
+        activation_norm = activation / (
+            np.max(activation) + 1e-12
+        )
+
+        # Frame-to-frame changes
+        activation_diff = np.diff(
+            activation_norm
+        )
+
+        # Positive changes only
+        positive_diff = np.maximum(
+            activation_diff,
+            0
+        )
+
+        # Transientness:
+        # strength of the largest activation attacks
+        if len(positive_diff) > 0:
+            transientness = np.percentile(
+                positive_diff,
+                95
+            )
+        else:
+            transientness = 0.0
+
+        # Number of significant activation frames
+        active_frames = np.sum(
+            activation_norm > 0.3
+        )
+
+        sustain = (
+            active_frames /
+            len(activation_norm)
+        )
+
+        # Activation variance
+        activation_variance = np.var(
+            activation_norm
+        )
+
+        # --------------------------------------------------
+        # Harmonicity approximation
+        #
+        # Look for multiple strong spectral peaks.
+        # Harmonic instruments tend to have several
+        # concentrated peaks instead of a flat spectrum.
+        # --------------------------------------------------
+
+        # Normalize spectrum
+        s = spectrum / np.max(spectrum)
+
+        # Find local peaks
+        peaks = []
+
+        for i in range(1, len(s) - 1):
+
+            if (
+                s[i] > s[i - 1]
+                and s[i] > s[i + 1]
+                and s[i] > 0.1
+            ):
+                peaks.append(i)
+
+        peaks = np.array(peaks)
+
+        if len(peaks) >= 2:
+
+            peak_strength = np.mean(
+                s[peaks]
+            )
+
+            harmonicity = (
+                peak_strength
+                * min(len(peaks) / 10, 1.0)
+            )
+
+        else:
+            harmonicity = 0.0
+
+        # --------------------------------------------------
+        # Rythmicity
+        # --------------------------------------------------
+
+        rhythmicity = calculate_rhythmicity(activation)
+
+        # --------------------------------------------------
+        # Save features
+        # --------------------------------------------------
+
+        results.append({
+
+            "component": k,
+
+            "energy": total_energy,
+
+            "bass_ratio": bass_ratio,
+
+            "low_ratio": low_ratio,
+
+            "high_ratio": high_ratio,
+
+            "spectral_centroid": centroid,
+
+            "spectral_bandwidth": bandwidth,
+
+            "spectral_flatness": flatness,
+
+            "peakiness": peakiness,
+
+            "transientness": transientness,
+
+            "sustain": sustain,
+
+            "activation_variance": activation_variance,
+
+            "harmonicity": harmonicity,
+
+            "num_peaks": len(peaks),
+
+            "rhythmicity": rhythmicity
+        })
+
+    df = pd.DataFrame(results)
+
+    return df
+
+
+
+def calculate_rhythmicity(activation):
+    """
+    Calculate rhythmicity of an NMF component
+    using only its temporal activation H[i].
+
+    Returns a score between 0 and 1.
+    """
+
+    activation = np.asarray(activation, dtype=float)
+
+    if len(activation) < 3:
+        return 0.0
+
+    # Remove mean
+    activation = activation - np.mean(activation)
+
+    std = np.std(activation)
+
+    if std < 1e-10:
+        return 0.0
+
+    # Normalize
+    activation /= std
+
+    # Find significant activation peaks
+    peaks, properties = find_peaks(
+        activation,
+        prominence=0.5,
+        distance=2
+    )
+
+    if len(peaks) < 3:
+        return 0.0
+
+    # Time between consecutive activations
+    intervals = np.diff(peaks)
+
+    if len(intervals) < 2:
+        return 0.0
+
+    mean_interval = np.mean(intervals)
+
+    if mean_interval < 1e-10:
+        return 0.0
+
+    # How consistent are the intervals?
+    variation = np.std(intervals) / mean_interval
+
+    regularity = 1.0 / (1.0 + variation)
+
+    # How strong are the peaks?
+    peak_strength = np.mean(properties["prominences"])
+    peak_strength = peak_strength / (peak_strength + 1.0)
+
+    # Combine
+    score = (
+        0.7 * regularity +
+        0.3 * peak_strength
+    )
+
+    return float(np.clip(score, 0.0, 1.0))
+
+
+
+def analyze_vocal_features(
+    W,
+    H,
+    sample_rate,
+    n_fft,
+    eps=1e-10
+):
+    """
+    Extract a small set of vocal-oriented features
+    from NMF components.
+
+    W : (K, N)
+        NMF basis matrix.
+
+    H : (N, T)
+        NMF activation matrix.
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        One row per NMF component.
+    """
+
+    W = np.maximum(W, 0)
+    H = np.maximum(H, 0)
+
+    K, num_components = W.shape
+
+    freqs = np.linspace(
+        0,
+        sample_rate / 2,
+        K
+    )
+
+    results = []
+
+    for component_idx in range(num_components):
+
+        W_i = W[:, component_idx]
+        H_i = H[component_idx]
+
+        # ----------------------------------------------------
+        # Reconstructed component
+        # ----------------------------------------------------
+
+        component = (
+            W_i[:, None] *
+            H_i[None, :]
+        )
+
+        spectrum = np.mean(
+            component,
+            axis=1
+        )
+
+        spectrum = np.maximum(
+            spectrum,
+            0
+        )
+
+        total_energy = (
+            np.sum(spectrum) + eps
+        )
+
+        # ====================================================
+        # 1. Formant strength
+        # ====================================================
+
+        formant_bands = [
+            (300, 1000),
+            (800, 2500),
+            (1800, 3500)
+        ]
+
+        formant_values = []
+
+        for low, high in formant_bands:
+
+            mask = (
+                (freqs >= low) &
+                (freqs <= high)
+            )
+
+            if np.any(mask):
+
+                formant_values.append(
+                    np.sum(spectrum[mask])
+                    / total_energy
+                )
+
+        formant_strength = (
+            np.mean(formant_values)
+            if formant_values
+            else 0.0
+        )
+
+        # ====================================================
+        # 2. Spectral envelope smoothness
+        # ====================================================
+
+        if len(spectrum) >= 15:
+
+            kernel = np.ones(15) / 15
+
+            envelope = np.convolve(
+                spectrum,
+                kernel,
+                mode="same"
+            )
+
+            envelope_change = np.mean(
+                np.abs(np.diff(envelope))
+            )
+
+            spectral_envelope_smoothness = (
+                1.0 /
+                (
+                    1.0 +
+                    envelope_change /
+                    (
+                        np.mean(envelope)
+                        + eps
+                    )
+                )
+            )
+
+        else:
+
+            spectral_envelope_smoothness = 0.0
+
+        # ====================================================
+        # 3. Pitch trajectory
+        # ====================================================
+
+        pitch_mask = (
+            (freqs >= 70) &
+            (freqs <= 500)
+        )
+
+        pitch_freqs = freqs[pitch_mask]
+
+        pitch_spectrum = (
+            component[pitch_mask]
+        )
+
+        if len(pitch_freqs) > 0:
+
+            peak_indices = np.argmax(
+                pitch_spectrum,
+                axis=0
+            )
+
+            pitch = pitch_freqs[
+                peak_indices
+            ]
+
+            peak_energy = np.max(
+                pitch_spectrum,
+                axis=0
+            )
+
+            frame_energy = (
+                np.sum(
+                    pitch_spectrum,
+                    axis=0
+                ) + eps
+            )
+
+            pitch_confidence = (
+                peak_energy /
+                frame_energy
+            )
+
+        else:
+
+            pitch = np.zeros(
+                component.shape[1]
+            )
+
+            pitch_confidence = np.zeros(
+                component.shape[1]
+            )
+
+        # # ====================================================
+        # # 4. Pitch continuity
+        # # ====================================================
+
+        # valid_pitch = (
+        #     pitch_confidence >= 0.10
+        # )
+
+        # if np.sum(valid_pitch) >= 3:
+
+        #     valid_p = pitch[
+        #         valid_pitch
+        #     ]
+
+        #     log_pitch = np.log2(
+        #         np.maximum(
+        #             valid_p,
+        #             eps
+        #         )
+        #     )
+
+        #     pitch_changes = np.abs(
+        #         np.diff(log_pitch)
+        #     )
+
+        #     if len(pitch_changes) > 0:
+
+        #         pitch_continuity = np.exp(
+        #             -10.0 *
+        #             np.median(
+        #                 pitch_changes
+        #             )
+        #         )
+
+        #     else:
+
+        #         pitch_continuity = 0.0
+
+        # else:
+
+        #     pitch_continuity = 0.0
+
+        # pitch_continuity = float(
+        #     np.clip(
+        #         pitch_continuity,
+        #         0,
+        #         1
+        #     )
+        # )
+
+        # # ====================================================
+        # # 5. Pitch range
+        # # ====================================================
+
+        # if np.sum(valid_pitch) >= 3:
+
+        #     valid_p = pitch[
+        #         valid_pitch
+        #     ]
+
+        #     min_pitch = np.min(
+        #         valid_p
+        #     )
+
+        #     max_pitch = np.max(
+        #         valid_p
+        #     )
+
+        #     if min_pitch > 0:
+
+        #         pitch_range_semitones = (
+        #             12 *
+        #             np.log2(
+        #                 max_pitch /
+        #                 (min_pitch + eps)
+        #             )
+        #         )
+
+        #     else:
+
+        #         pitch_range_semitones = 0.0
+
+        # else:
+
+        #     pitch_range_semitones = 0.0
+
+        # ---------------------------------------------------------
+        # Mid-band ratio (300–4000 Hz)
+        # ---------------------------------------------------------
+
+        W_i = W[:, component_idx]
+        H_i = H[component_idx]
+
+        component = W_i[:, None] * H_i[None, :]
+
+        spectrum = np.mean(component, axis=1)
+
+        mid_mask = (freqs >= 300) & (freqs <= 4000)
+
+        mid_band_ratio = (
+            np.sum(spectrum[mid_mask]) /
+            (np.sum(spectrum) + eps)
+        )
+
+        # Keep the raw semitone range.
+        # Don't convert it to a score yet.
+        # It is more useful for analysis.
+        
+        results.append({
+            "component": component_idx,
+            "formant_strength":
+                float(formant_strength),
+            "spectral_envelope_smoothness":
+                float(spectral_envelope_smoothness),
+            # "pitch_continuity":
+            #     float(pitch_continuity),
+            # "pitch_range_semitones":
+            #     float(pitch_range_semitones),
+            "mid_band_ratio":
+                float(mid_band_ratio),
+        })
+
+    df = pd.DataFrame(results)
+    # df.to_csv("nmf_vocal_features.csv", index=False)
+
+    return df
+
+
+def normalize_column(column):
+    min_val = column.min()
+    max_val = column.max()
+
+    if max_val == min_val:
+        return column * 0.0
+
+    return (column - min_val) / (max_val - min_val)
+
+
+def score_components(df):
+    columns_to_normalize = [
+        "energy",
+        "spectral_centroid",
+        "spectral_bandwidth",
+        "peakiness",
+        "num_peaks",
+    ]
+    for col in columns_to_normalize:
+        df[col] = normalize_column(df[col])
+    
+    total_energy = df["energy"].values
+    bass_ratio = df["bass_ratio"].values
+    low_ratio = df["low_ratio"].values
+    high_ratio = df["high_ratio"].values
+    spectral_centroid = df["spectral_centroid"].values
+    spectral_bandwidth = df["spectral_bandwidth"].values
+    spectral_flatness = df["spectral_flatness"].values
+    peakiness = df["peakiness"].values
+    transientness = df["transientness"].values
+    sustain = df["sustain"].values
+    activation_variance = df["activation_variance"].values
+    harmonicity = df["harmonicity"].values
+    num_peaks = df["num_peaks"].values
+    rhythmicity = df["rhythmicity"].values
+
+    mid_band_ratio = df["mid_band_ratio"].values
+    formant_strength = df["formant_strength"].values
+    spectral_envelope_smoothness = df["spectral_envelope_smoothness"].values
+
+    # percussive
+    percussion_score = (
+        0.40 * transientness +
+        0.20 * high_ratio +
+        0.15 * spectral_flatness +
+        0.10 * (1 - sustain) +
+        0.10 * rhythmicity +
+        0.05 * activation_variance
+    )
+    df["percussion_score"] = percussion_score
+
+    bass_score = (
+        0.40 * bass_ratio +
         0.20 * low_ratio +
-        0.20 * harmonicity +
-        0.15 * sustain +
-        0.10 * (1 - centroid) +
+        0.15 * (1 - high_ratio) +
+        0.10 * sustain +
+        0.10 * harmonicity +
         0.05 * (1 - transientness)
     )
+    df["bass_score"] = bass_score
 
-    # Highest score first
-    # df = df.sort_values(
-    #     "bass_score",
-    #     ascending=False
-    # ).reset_index(drop=True)
+    vocal_score = (
+        0.45 * mid_band_ratio +
+        0.35 * formant_strength +
+        0.20 * spectral_envelope_smoothness
+    )
+    df["vocal_score"] = vocal_score
 
-    return df
-
-
-def get_bass_spectogram(df, W, H, spectra, nmf_mag, top_n=3, print_info=False):
-    df = df.copy()
-    df = df.sort_values(
-        "bass_score",
-        ascending=False
-    ).reset_index(drop=True)
-
-    top_bass = df.head(top_n)["component"].tolist()
-
-    print(f"Top bass components: {top_bass}")
+    harmonic_score = (
+        0.30 * harmonicity +
+        0.25 * sustain +
+        0.15 * (1 - transientness) +
+        0.10 * (1 - bass_ratio) +
+        0.10 * spectral_bandwidth +
+        0.10 * (1 - spectral_flatness)
+    )
+    df["harmonic_score"] = harmonic_score
     
-    bass_magnitude = sum(
-        np.outer(W[:, k], H[k, :])
-        for k in top_bass
-    )
-
-    bass_magnitude = bass_magnitude.T
-
-    eps = 1e-10
-
-    bass_power = bass_magnitude ** 2
-    total_power = np.abs(spectra) ** 2
-
-    bass_mask = bass_power / (total_power + eps)
-
-    bass_mask = np.clip(bass_mask, 0, 1)
-
-    bass_spectra = spectra * bass_mask
-
-    if print_info:
-        magnitude = np.abs(spectra)
-        print(f"bass_magnitude.max(): {bass_magnitude.max()}")
-        print(f"magnitude.max(): {magnitude.max()}")
-        print(f"bass_mag > mag (mean): {np.mean(bass_magnitude > magnitude)}")
-
-    return bass_spectra
-
-
-def calculate_drum_score(df):
-
-    def rank_score(column):
-        values = df[column].astype(float).to_numpy()
-
-        ranks = np.argsort(np.argsort(values))
-
-        return ranks / max(len(values) - 1, 1)
-
-    # Rank-normalized features
-    energy = rank_score("energy")
-    low_ratio = rank_score("low_ratio")
-    high_ratio = rank_score("high_ratio")
-    centroid = rank_score("spectral_centroid")
-    bandwidth = rank_score("spectral_bandwidth")
-    peakiness = rank_score("peakiness")
-    transientness = rank_score("transientness")
-    sustain = rank_score("sustain")
-    harmonicity = rank_score("harmonicity")
-    rhythmicity = rank_score("rhythmicity")
-    num_peaks = rank_score("num_peaks")
-
-    # --------------------------------------------------
-    # LOW-FREQUENCY PERCUSSION
-    # --------------------------------------------------
-
-    low_percussion = (
-        0.30 * low_ratio +
-        0.20 * peakiness +
-        0.20 * rhythmicity +
-        0.15 * (1.0 - sustain) +
-        0.10 * (1.0 - harmonicity) +
-        0.05 * energy
-    )
-
-    # --------------------------------------------------
-    # HIGH / METALLIC PERCUSSION
-    # --------------------------------------------------
-
-    high_percussion = (
-        0.30 * high_ratio +
-        0.20 * bandwidth +
-        0.15 * rhythmicity +
-        0.15 * (1.0 - sustain) +
-        0.10 * num_peaks +
-        0.10 * (1.0 - harmonicity)
-    )
-
-    # --------------------------------------------------
-    # FINAL DRUM SCORE
-    # --------------------------------------------------
-
-    drum_score = np.maximum(
-        low_percussion,
-        high_percussion
-    )
-
-    df["drum_score"] = drum_score
-
     return df
 
 
-def get_drum_spectogram(df, W, H, spectra, nmf_mag, top_n=5, print_info=False):
+def get_custom_mask(W, H, spectra, comps, power=2):
+    # Wiener-style soft mask for selected components
+    magnitude = sum(
+        np.outer(W[:, k], H[k, :])
+        for k in comps
+    )
 
-    df = df.copy()
-    df = df.sort_values(
-        "drum_score",
-        ascending=False
-    ).reset_index(drop=True)
-
-    top_percussive = df.head(top_n)["component"].tolist()
-
-    print(f"Top percussive components: {top_percussive}")
+    magnitude = magnitude.T
 
     eps = 1e-10
 
-    drum_power = np.zeros_like(
-        nmf_mag,
-        dtype=float
-    )
+    comp_power = magnitude ** power
+    total_power = np.abs(spectra) ** int(power)
 
-    other_power = np.zeros_like(
-        nmf_mag,
-        dtype=float
-    )
+    mask = comp_power / (total_power + eps)
 
-    # selected = set(top_percussive)
+    mask = np.clip(mask, 0, 1)
 
-    top_percussive = [28, 0]
+    return mask
 
-    for k in range(W.shape[1]):
 
-        component = np.outer(
-            W[:, k],
-            H[k, :]
-        ).T
+def get_rest_mask(mask_dict):
+    # Initialize rest_mask as an array of ones with the same shape as the first mask
+    first_key = next(iter(mask_dict))
+    rest_mask = np.ones_like(mask_dict[first_key])
 
-        component_power = component ** 2
+    mask_sum = np.zeros_like(rest_mask)
+    for mask in mask_dict.values():
+        mask_sum += mask
+    
+    # Identify indices where the mask sum exceeds 1
+    over_one = mask_sum > 1
+    over_one = np.ones_like(mask_sum, dtype=bool)  # set all to True
 
-        if k in top_percussive:
-            drum_power += component_power
-        else:
-            other_power += component_power
+    # print(f"Mask sum exceeds 1: {np.sum(over_one)}")
+    # print(f"Mask sum under 1: {np.sum(~over_one)}")
+    
+    # Scale all masks in the dictionary at those specific indices so they sum to 1
+    for key in mask_dict:
+        mask_dict[key][over_one] /= mask_sum[over_one]
+        
+    # Subtract the original mask_sum from rest_mask (which started as 1s).
+    # If the sum was > 1, it will become negative, which the clip below will handle.
+    rest_mask -= mask_sum
 
-    # Wiener-style soft mask
-    drum_mask = drum_power / (
-        drum_power +
-        other_power +
-        eps
-    )
+    # Ensure that rest_mask values are clipped between 0 and 1
+    rest_mask = np.clip(rest_mask, 0, 1)
 
-    drum_spectra = spectra * drum_mask
-
-    if print_info:
-        print("--------------------------DRUM---------------------------")
-        print("Drum magnitude:")
-        print("min:", drum_power.min())
-        print("max:", drum_power.max())
-        print("mean:", drum_power.mean())
-
-        print("\nDrum mask:")
-        print("min:", drum_mask.min())
-        print("max:", drum_mask.max())
-        print("mean:", drum_mask.mean())
-
-        print("\nMask percentiles:")
-        print(np.percentile(
-            drum_mask,
-            [50, 75, 90, 95, 99]
-        ))
-        print("---------------------------------------------------------")
-
-    return drum_spectra
+    return rest_mask
