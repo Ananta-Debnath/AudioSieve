@@ -353,29 +353,35 @@ class FlangerTool extends Tool {
 // 05 Separation (built against the /process/separate contract)
 // ---------------------------------------------------------------------
 
+// The route separates only the first separation_max_sec of a long track.
+const lengthNote = (seconds) => `Separation analyses the first ${seconds} s of the track.`;
+
 class SeparationTool extends Tool {
   buildControls(container) {
+    this.capNote = el("p", { class: "note note-warn", hidden: true });
     container.append(el("p", { class: "note" },
-      "No parameters: the separation module decides the stems. Press RUN, then mute, solo or play them all together."));
+      "No parameters: the separation module decides the stems. Press RUN, then mute, solo or play them all together."),
+    this.capNote);
   }
 
   params() {
     return {};
   }
 
-  showRunError(err) {
-    if (err.status === 501) {
-      this.clearOutput();
-      this.output.replaceChildren(el("div", { class: "msg msg-warn" }, "Separation module offline, pending merge."));
-      return;
-    }
-    super.showRunError(err);
+  sourceChanged() {
+    super.sourceChanged();
+    const cap = CONFIG.limits.separation_max_sec;
+    const meta = this.source.meta;
+    this.capNote.hidden = !(cap && meta && meta.duration > cap);
+    this.capNote.textContent = cap ? lengthNote(cap) : "";
   }
 
   async showResult(data, seconds) {
     this.clearOutput();
     const wrap = el("div", { class: "output" });
     this.output.replaceChildren(wrap);
+
+    if (data.note) wrap.append(el("p", { class: "msg msg-warn" }, data.note));
 
     const originalSlot = el("div");
     wrap.append(originalSlot);

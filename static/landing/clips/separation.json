@@ -1,0 +1,14 @@
+{
+  "tool": "separation",
+  "switch_at_s": 2.92,
+  "duration_s": 5.72,
+  "label_b": "STEM: DRUMS",
+  "params": {
+    "stem": "drums"
+  },
+  "phrase": {
+    "source": "demo.wav",
+    "start_s": 16.25,
+    "length_s": 2.8
+  }
+}

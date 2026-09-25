@@ -5,6 +5,7 @@ upload a file once, then run any tool on it by id.
 """
 
 import json
+import logging
 import os
 import shutil
 import threading
@@ -20,7 +21,7 @@ matplotlib.use("Agg")
 import numpy as np
 import soundfile as sf
 from flask import Flask, abort, jsonify, render_template, request, send_file, url_for
-from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.exceptions import InternalServerError, RequestEntityTooLarge
 
 import runs
 import stft
@@ -28,7 +29,9 @@ import ui_config
 import utils
 from analysis import backstage
 from analysis.waveform import waveform_json
-from effects import echo, eq_filter, flanger, reverb
+from effects import echo, eq_filter, flanger, reverb, separation
+
+log = logging.getLogger("spectra")
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -42,6 +45,15 @@ LANDING_TOOLS = ("eq", "reverb", "echo", "flanger", "separation")
 ALLOWED_EXTENSIONS = {"wav", "mp3", "flac"}
 MAX_UPLOAD_MB = 50
 MAX_DURATION_SEC = 6 * 60
+
+# Every file is decoded by soundfile's libsndfile, ffmpeg is never used.
+# libsndfile reads MP3 from version 1.1 on (the soundfile wheels bundle
+# such a build); WAV and FLAC work with any build.
+MP3_SUPPORTED = "MP3" in sf.available_formats()
+MP3_MISSING = (
+    "MP3 is not supported on this server: its libsndfile has no MP3 decoder "
+    "(it needs libsndfile 1.1 or newer; pip install -r requirements.txt brings one)."
+)
 
 # /response/* plots depend only on the parameters, not on an upload.
 RESPONSE_SR = 44100
@@ -87,9 +99,24 @@ EFFECTS = {
     "flanger": flanger,
 }
 
-# SEPARATION_MOCK=1: /process/separate returns the real contract, with
-# copies of the input as these stems, until the separation module is merged.
-SEPARATION_MOCK_STEMS = ("drums", "bass", "rest")
+# SEPARATION_MOCK=1: /process/separate skips the real separation and
+# returns copies of the input as the stems (a fallback, off by default).
+SEPARATION_MOCK_STEMS = separation.STEMS
+
+
+def _env_seconds(name, default):
+    value = os.environ.get(name, "")
+    try:
+        return float(value) if value.strip() else default
+    except ValueError:
+        log.warning("Ignoring %s=%r (not a number); using %g.", name, value, default)
+        return default
+
+
+# Separation runs on the first SEPARATION_MAX_SECONDS of a track only (0
+# or less: the whole track). It takes about 0.4 s per second of stereo
+# audio, so a 6-minute track would keep the request busy for minutes.
+SEPARATION_MAX_SECONDS = _env_seconds("SEPARATION_MAX_SECONDS", 60)
 
 # Backstage JSON is cached per run; bump this when its shape changes so
 # old caches are ignored.
@@ -100,6 +127,9 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 PROCESSED_DIR.mkdir(exist_ok=True)
+
+if not MP3_SUPPORTED:
+    log.warning("%s WAV and FLAC uploads still work.", MP3_MISSING)
 
 # One registry per output directory (tests point PROCESSED_DIR elsewhere).
 _registries = {}
@@ -328,6 +358,14 @@ def too_large(_e):
     return error(f"File too large (max {MAX_UPLOAD_MB} MB).", 413)
 
 
+@app.errorhandler(InternalServerError)
+def internal_error(e):
+    """A crash inside a route: the page shows the reason, not "HTTP 500"
+    (the traceback is still logged)."""
+    cause = e.original_exception or e
+    return error(f"Server error: {type(cause).__name__}: {cause}", 500)
+
+
 def landing_previews():
     """The reel's preview assets (made by scripts/make_landing_assets.py),
     per tool: the clip's metadata plus the clip and card background URLs.
@@ -370,6 +408,7 @@ def lab():
         "max_upload_mb": MAX_UPLOAD_MB,
         "max_duration_sec": MAX_DURATION_SEC,
         "extensions": sorted(ALLOWED_EXTENSIONS),
+        "separation_max_sec": separation_max_seconds(),
     })
     return render_template("index.html", tools=tools, config=config)
 
@@ -384,6 +423,8 @@ def register_upload(filename, save):
     if ext not in ALLOWED_EXTENSIONS:
         allowed = ", ".join(f".{e}" for e in sorted(ALLOWED_EXTENSIONS))
         return error(f"Unsupported format '.{ext}'. Allowed: {allowed}.")
+    if ext == "mp3" and not MP3_SUPPORTED:
+        return error(f"{MP3_MISSING} Upload a WAV or FLAC file instead.", 415)
 
     file_id = str(uuid.uuid4())
     path = UPLOAD_DIR / f"{file_id}.{ext}"
@@ -451,42 +492,59 @@ def uploaded_waveform(file_id):
     return jsonify(waveform_json(audio, sr))
 
 
+def separation_max_seconds():
+    """The separation length cap in seconds, or None for no cap."""
+    return SEPARATION_MAX_SECONDS if SEPARATION_MAX_SECONDS > 0 else None
+
+
+def separation_note(max_seconds):
+    return f"Separation analyses the first {max_seconds:g} s of the track."
+
+
 @app.post("/process/separate")
 def process_separate():
-    if os.environ.get("SEPARATION_MOCK") != "1":
-        return error(
-            "Separation is not implemented in the app shell yet; "
-            "it is being developed on the separation branch.",
-            501,
-        )
-
     params = request_params()
     file_id = params.pop("file_id", None)
     src = find_upload(file_id)
     if src is None:
         return error("Unknown or missing file_id. Upload a file first.", 404)
 
-    # Mock: every "stem" is a copy of the input.
     audio, sr = sf.read(str(src), dtype="float32")
-    run_id = str(uuid.uuid4())
-    stems = []
-    for name in SEPARATION_MOCK_STEMS:
-        stem_id = str(uuid.uuid4())
-        write_result(stem_id, audio, sr)
-        stems.append({"name": name, "file": f"{stem_id}.wav", **result_urls(stem_id)})
+    input_seconds = len(audio) / sr
+    max_seconds = separation_max_seconds()
+    truncated = max_seconds is not None and len(audio) > int(max_seconds * sr)
+    if truncated:
+        audio = audio[:int(max_seconds * sr)]
 
+    mock = os.environ.get("SEPARATION_MOCK") == "1"
+    if mock:
+        # Every "stem" is a copy of the input.
+        stems = {name: audio for name in SEPARATION_MOCK_STEMS}
+    else:
+        stems = separation.separate(audio, sr)
+
+    run_id = str(uuid.uuid4())
+    saved = []
+    for name, stem in stems.items():
+        stem_id = str(uuid.uuid4())
+        write_result(stem_id, stem, sr)
+        saved.append({"name": name, "file": f"{stem_id}.wav", "audio": stem, **result_urls(stem_id)})
+
+    analysed = {"analysed_seconds": len(audio) / sr, "input_seconds": input_seconds, "truncated": truncated}
     run_registry().add(
-        run_id, "separate", {"mock": True}, file_id,
-        {"stems": [{"name": s["name"], "file": s["file"]} for s in stems]},
-        sr=sr, source=upload_info(file_id),
+        run_id, "separate", {"mock": mock, "max_seconds": max_seconds}, file_id,
+        {"stems": [{"name": s["name"], "file": s["file"]} for s in saved]},
+        sr=sr, source=upload_info(file_id), **analysed,
     )
-    wave = waveform_json(audio, sr)  # the same for every copy
     return jsonify({
         "run_id": run_id,
         "input_url": url_for("uploaded_audio", file_id=file_id),
+        **analysed,
+        "note": separation_note(max_seconds) if truncated else None,
         "stems": [
-            {"name": s["name"], "url": s["url"], "download_url": s["download_url"], **wave}
-            for s in stems
+            {"name": s["name"], "url": s["url"], "download_url": s["download_url"],
+             **waveform_json(s["audio"], sr)}
+            for s in saved
         ],
     })
 
@@ -779,7 +837,7 @@ def backstage_mixture(run_id):
         abort(404)
     path = PROCESSED_DIR / f"{run_id}_mixture.png"
     if not path.exists():
-        audio, sr = backstage.read(run_input(run))
+        audio, sr = backstage.read_mixture(run, run_input(run))
         backstage.save_mixture_png(backstage.mono(audio), sr, path)
     return send_file(path, mimetype="image/png")
 
@@ -796,11 +854,18 @@ def backstage_mask(run_id, stem):
     index = list(files).index(stem)  # the stem name is user-facing; the index names the file
     path = PROCESSED_DIR / f"{run_id}_mask{index}.png"
     if not path.exists():
-        mix, sr = backstage.read(run_input(run))
+        mix, sr = backstage.read_mixture(run, run_input(run))
         audio, _ = backstage.read(files[stem])
         backstage.save_mask_png(backstage.mono(mix), backstage.mono(audio), sr, path)
     return send_file(path, mimetype="image/png")
 
 
+HOST = "127.0.0.1"
+PORT = 5000
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    # Debug mode (reloader, in-browser debugger) only on request: SPECTRA_DEBUG=1.
+    debug = os.environ.get("SPECTRA_DEBUG") == "1"
+    print(f"SPECTRA running at http://{HOST}:{PORT}  (Ctrl+C to stop)", flush=True)
+    app.run(host=HOST, port=PORT, debug=debug)

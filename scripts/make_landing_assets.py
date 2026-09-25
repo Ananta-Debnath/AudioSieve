@@ -20,9 +20,8 @@ The phrase defaults to the loudest 2.8 s of static/demo/demo.wav. A reel
 slide lasts as long as its clip (the phrase twice, plus reverb and echo
 tails), so 2.8 s keeps the slides at about 6 s.
 
-Separation is skipped, with a warning, until the separation module is
-merged (its card then says PREVIEW COMING SOON). Run this again after
-the merge.
+Separation's clip is the drums stem, from the same
+effects.separation.separate() that /process/separate calls.
 """
 
 import argparse
@@ -39,7 +38,7 @@ sys.path.insert(0, str(ROOT))
 
 import app  # noqa: E402  (the /response/* routes, through its test client)
 from analysis import backstage  # noqa: E402
-from effects import echo, eq_filter, flanger, reverb  # noqa: E402
+from effects import echo, eq_filter, flanger, reverb, separation  # noqa: E402
 
 SOURCE = ROOT / "static" / "demo" / "demo.wav"
 OUT_DIR = ROOT / "static" / "landing"
@@ -93,18 +92,8 @@ LABEL_B = {"separation": "STEM: DRUMS"}
 # ---------------------------------------------------------------------
 
 def separated_stem(audio, sr, stem):
-    """One stem from the merged separation module, or None before the merge.
-
-    Expected entry point: effects.separation.separate(audio, sr) returning
-    {stem name: audio}. If the merged module looks different, adapt this
-    function to whatever /process/separate calls.
-    """
-    try:
-        from effects.separation import separate
-    except ImportError as e:
-        print(f"WARNING: separation skipped, module not merged yet ({e}).")
-        return None
-    return np.asarray(separate(audio, sr)[stem])
+    """One stem of audio, from the separation module /process/separate uses."""
+    return np.asarray(separation.separate(audio, sr)[stem])
 
 
 def process(tool, audio, sr):

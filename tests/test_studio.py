@@ -16,7 +16,7 @@ import soundfile as sf
 
 import runs
 import ui_config
-from effects import echo, eq_filter, flanger, reverb
+from effects import echo, eq_filter, flanger, reverb, separation
 
 SR = 8000
 ROOT = Path(__file__).resolve().parent.parent
@@ -248,13 +248,34 @@ def test_registry_lists_newest_first_and_skips_broken_sidecars(tmp_path, monkeyp
 
 
 # ---------------------------------------------------------------------
-# Separation: 501 until merged, or the contract with fake stems
+# Separation: the real module by default, fake stems with the mock
 # ---------------------------------------------------------------------
 
-def test_separation_is_501_without_the_mock(client):
-    meta = upload(client, noise(SR), SR)
+def test_separation_returns_the_contract(client, app_module):
+    audio = noise((SR, 2))
+    meta = upload(client, audio, SR)
+
     res = client.post("/process/separate", json={"file_id": meta["file_id"]})
-    assert res.status_code == 501
+    assert res.status_code == 200, res.get_json()
+    data = res.get_json()
+    assert {"run_id", "stems"} <= set(data)
+    assert data["truncated"] is False and data["note"] is None
+    assert [s["name"] for s in data["stems"]] == list(separation.STEMS)
+    total = 0
+    for stem in data["stems"]:
+        assert {"name", "url", "download_url"} <= set(stem)
+        stem_audio, sr = sf.read(io.BytesIO(client.get(stem["url"]).data))
+        assert sr == SR and stem_audio.shape == audio.shape
+        assert np.all(np.isfinite(stem_audio))
+        total = total + stem_audio
+        download = client.get(stem["download_url"])
+        assert download.headers["Content-Disposition"].startswith("attachment")
+    assert np.allclose(total, audio, atol=1e-5)  # the stems add up to the mix
+
+    run = app_module.run_registry().get(data["run_id"])
+    assert run["tool"] == "separate" and run["file_id"] == meta["file_id"]
+    assert run["params"]["mock"] is False
+    assert [s["name"] for s in run["outputs"]["stems"]] == list(separation.STEMS)
 
 
 def test_separation_mock_returns_the_contract(client, app_module, monkeypatch):
@@ -265,7 +286,7 @@ def test_separation_mock_returns_the_contract(client, app_module, monkeypatch):
     res = client.post("/process/separate", json={"file_id": meta["file_id"]})
     assert res.status_code == 200, res.get_json()
     data = res.get_json()
-    assert [s["name"] for s in data["stems"]] == ["drums", "bass", "rest"]
+    assert [s["name"] for s in data["stems"]] == list(separation.STEMS)
     for stem in data["stems"]:
         assert {"name", "url", "download_url"} <= set(stem)
         stem_audio, sr = sf.read(io.BytesIO(client.get(stem["url"]).data))
@@ -275,7 +296,85 @@ def test_separation_mock_returns_the_contract(client, app_module, monkeypatch):
 
     run = app_module.run_registry().get(data["run_id"])
     assert run["tool"] == "separate" and run["file_id"] == meta["file_id"]
-    assert [s["name"] for s in run["outputs"]["stems"]] == ["drums", "bass", "rest"]
+    assert run["params"]["mock"] is True
+    assert [s["name"] for s in run["outputs"]["stems"]] == list(separation.STEMS)
+
+
+def test_long_tracks_are_separated_up_to_the_cap(client, app_module, monkeypatch):
+    monkeypatch.setenv("SEPARATION_MOCK", "1")
+    monkeypatch.setattr(app_module, "SEPARATION_MAX_SECONDS", 0.25)
+    meta = upload(client, noise(SR), SR)
+
+    data = client.post("/process/separate", json={"file_id": meta["file_id"]}).get_json()
+    assert data["truncated"] is True
+    assert data["analysed_seconds"] == pytest.approx(0.25) and data["input_seconds"] == pytest.approx(1.0)
+    assert data["note"] == "Separation analyses the first 0.25 s of the track."
+    for stem in data["stems"]:
+        assert sf.info(io.BytesIO(client.get(stem["url"]).data)).duration == pytest.approx(0.25)
+        assert stem["duration"] == pytest.approx(0.25)
+
+    # The page gets the cap, to warn before RUN.
+    assert page_config(client)["limits"]["separation_max_sec"] == 0.25
+    # 0 turns the cap off.
+    monkeypatch.setattr(app_module, "SEPARATION_MAX_SECONDS", 0)
+    data = client.post("/process/separate", json={"file_id": meta["file_id"]}).get_json()
+    assert data["truncated"] is False and data["analysed_seconds"] == pytest.approx(1.0)
+    assert page_config(client)["limits"]["separation_max_sec"] is None
+
+
+def test_separation_cap_defaults_to_60_seconds(monkeypatch):
+    import app as app_module
+
+    assert app_module._env_seconds("SEPARATION_MAX_SECONDS_UNSET_FOR_TEST", 60) == 60
+    monkeypatch.setenv("SEPARATION_MAX_SECONDS", "30")
+    assert app_module._env_seconds("SEPARATION_MAX_SECONDS", 60) == 30
+    monkeypatch.setenv("SEPARATION_MAX_SECONDS", "lots")
+    assert app_module._env_seconds("SEPARATION_MAX_SECONDS", 60) == 60
+
+
+def test_a_server_error_is_json_with_the_reason(client, app_module, monkeypatch):
+    def broken(_audio, _sr):
+        raise MemoryError("out of memory")
+
+    monkeypatch.setattr(app_module.separation, "separate", broken)
+    meta = upload(client, noise(SR), SR)
+    res = client.post("/process/separate", json={"file_id": meta["file_id"]})
+    assert res.status_code == 500
+    assert res.get_json()["error"] == "Server error: MemoryError: out of memory"
+
+
+# ---------------------------------------------------------------------
+# MP3 needs a libsndfile with MP3 support; WAV and FLAC always work
+# ---------------------------------------------------------------------
+
+def test_mp3_without_decoder_is_a_clear_error(client, app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "MP3_SUPPORTED", False)
+    res = client.post("/upload", data={"file": (io.BytesIO(b"ID3 not really mp3"), "song.mp3")},
+                      content_type="multipart/form-data")
+    assert res.status_code == 415
+    assert "MP3 is not supported" in res.get_json()["error"]
+    assert "WAV or FLAC" in res.get_json()["error"]
+    assert not list(app_module.UPLOAD_DIR.iterdir())  # nothing was saved
+
+    # The other formats still work.
+    assert upload(client, noise(SR), SR)["samplerate"] == SR
+    buf = io.BytesIO()
+    sf.write(buf, noise(SR), SR, format="FLAC")
+    res = client.post("/upload", data={"file": (io.BytesIO(buf.getvalue()), "clip.flac")},
+                      content_type="multipart/form-data")
+    assert res.status_code == 200, res.get_json()
+
+
+@pytest.mark.skipif("MP3" not in sf.available_formats(), reason="this libsndfile has no MP3 support")
+def test_mp3_upload_works_without_ffmpeg(client, app_module):
+    assert app_module.MP3_SUPPORTED
+    buf = io.BytesIO()
+    sf.write(buf, noise(44100), 44100, format="MP3", subtype="MPEG_LAYER_III")
+    res = client.post("/upload", data={"file": (io.BytesIO(buf.getvalue()), "clip.mp3")},
+                      content_type="multipart/form-data")
+    assert res.status_code == 200, res.get_json()
+    run = client.post("/process/echo", json={"file_id": res.get_json()["file_id"]})
+    assert run.status_code == 200, run.get_json()
 
 
 def test_separation_mock_needs_a_known_file(client, monkeypatch):

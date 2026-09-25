@@ -218,7 +218,7 @@ def visualize_B_diff(B_init, B, output_dir="Spectrograms/nmf/B_diff"):
         plt.close()
 
 
-def separate_sources_nmf(X, num_components, alpha=100.0, beta=0.0, max_iter=300, tol=1e-4):
+def separate_sources_nmf(X, num_components, alpha=100.0, beta=0.0, max_iter=300, tol=1e-4, diagnostics=True):
     """
     Separates a magnitude spectrogram X into Basis (B) and Gain (G) matrices 
     using Nonnegative Matrix Factorization with temporal continuity and sparseness.
@@ -230,6 +230,8 @@ def separate_sources_nmf(X, num_components, alpha=100.0, beta=0.0, max_iter=300,
     beta : float - Weight for the sparseness criterion (paper default 0).
     max_iter : int - Maximum number of multiplicative update iterations.
     tol : float - Convergence tolerance threshold.
+    diagnostics : bool - Save the B_diff plots and print the decomposition score
+        (the web app turns this off; B and G are the same either way).
     
     Returns:
     B : numpy.ndarray (K, J) - The estimated basis matrix (magnitude spectra).
@@ -313,12 +315,13 @@ def separate_sources_nmf(X, num_components, alpha=100.0, beta=0.0, max_iter=300,
         # Optional: Calculate convergence cost here using divergence, temporal, and sparseness costs
         # (Omitted for loop speed, assuming fixed max_iter for standard audio processing workflows)
 
-    # Visualize the difference between initial and final B
-    visualize_B_diff(B_init, B)
+    if diagnostics:
+        # Visualize the difference between initial and final B
+        visualize_B_diff(B_init, B)
 
-    score = evaluate_decomposition(X, B, G, verbose=True)
-    print(f"Final decomposition score: {score:.6f}")
-    print()
+        score = evaluate_decomposition(X, B, G, verbose=True)
+        print(f"Final decomposition score: {score:.6f}")
+        print()
 
     return B, G
 

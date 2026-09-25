@@ -15,7 +15,7 @@ import soundfile as sf
 
 import stft
 from analysis import backstage
-from effects import echo, flanger, reverb
+from effects import echo, flanger, reverb, separation
 
 SR = 8000
 
@@ -237,7 +237,7 @@ def test_separation_run_shows_its_stems(client, monkeypatch):
     res = client.post("/process/separate", json={"file_id": file_id})
     data = backstage_json(client, res.get_json()["run_id"])
 
-    assert [s["name"] for s in data["stems"]] == ["drums", "bass", "rest"]
+    assert [s["name"] for s in data["stems"]] == list(separation.STEMS)
     for stem in data["stems"]:
         assert stem["levels"] == data["levels"]["mixture"]  # mock stems are copies
         assert len(stem["envelope"]["max"]) == backstage.ENVELOPE_POINTS
@@ -247,8 +247,33 @@ def test_separation_run_shows_its_stems(client, monkeypatch):
     assert client.get(data["images"]["mixture"]).status_code == 200
 
     run_id = data["run"]["run_id"]
-    assert client.get(f"/backstage/{run_id}/mask/vocals.png").status_code == 404
+    assert client.get(f"/backstage/{run_id}/mask/guitar.png").status_code == 404
     assert client.get(f"/backstage/{run_id}/diff.png").status_code == 404
+
+
+def test_real_separation_run_shows_its_stems(client):
+    mix = sine(110, 1.0) + noise(SR, scale=0.05)
+    data = backstage_json(client, run(client, "separate", upload(client, mix)))
+
+    assert [s["name"] for s in data["stems"]] == list(separation.STEMS)
+    assert data["run"]["params"]["mock"] is False
+    assert data["levels"]["mixture"]["duration"] == pytest.approx(1.0)
+    for stem in data["stems"]:
+        assert stem["levels"]["duration"] == pytest.approx(1.0)
+        mask = client.get(data["images"]["masks"][stem["name"]])
+        assert mask.status_code == 200 and mask.data.startswith(b"\x89PNG")
+    assert client.get(data["images"]["mixture"]).status_code == 200
+
+
+def test_capped_separation_analyses_only_the_separated_part(client, app_module, monkeypatch):
+    monkeypatch.setenv("SEPARATION_MOCK", "1")
+    monkeypatch.setattr(app_module, "SEPARATION_MAX_SECONDS", 0.5)
+    data = backstage_json(client, run(client, "separate", upload(client, noise((SR, 2)))))
+
+    assert data["run"]["truncated"] is True and data["run"]["analysed_seconds"] == pytest.approx(0.5)
+    # The mixture is cut to the same 0.5 s as the stems.
+    assert data["levels"]["mixture"]["duration"] == pytest.approx(0.5)
+    assert all(stem["levels"] == data["levels"]["mixture"] for stem in data["stems"])
 
 
 # ---------------------------------------------------------------------
