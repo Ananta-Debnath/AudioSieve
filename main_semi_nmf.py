@@ -168,10 +168,10 @@ def main():
     HARMONIC_THRESHOLD = 0.525
 
     # percussion
-    # comp_dict["percussion"] = df.sort_values(by="percussion_score", ascending=False).head(2).index.tolist()
-    comp_dict["percussion"] = df[df["percussion_score"] > PERCUSSION_THRESHOLD].index.tolist()
-    if len(comp_dict["percussion"]) < PERCUSSION_MIN:
-        comp_dict["percussion"] = df.sort_values(by="percussion_score", ascending=False).head(PERCUSSION_MIN).index.tolist()
+    comp_dict["percussion"] = df.sort_values(by="percussion_score", ascending=False).head(PERCUSSION_MIN).index.tolist()
+    # comp_dict["percussion"] = df[df["percussion_score"] > PERCUSSION_THRESHOLD].index.tolist()
+    # if len(comp_dict["percussion"]) < PERCUSSION_MIN:
+    #     comp_dict["percussion"] = df.sort_values(by="percussion_score", ascending=False).head(PERCUSSION_MIN).index.tolist()
     print(f"percussion_comp: {comp_dict['percussion']}")
 
     # bass
@@ -184,10 +184,10 @@ def main():
     VOCAL_MAX = int(VOCAL_MAX)
 
     # vocal
-    # comp_dict["vocal"] = df.sort_values(by="vocal_score", ascending=False).head(4).index.tolist()
-    comp_dict["vocal"] = df[df["vocal_score"] > VOCAL_THRESHOLD].index.tolist()
-    if len(comp_dict["vocal"]) > VOCAL_MAX:
-        comp_dict["vocal"] = df.sort_values(by="vocal_score", ascending=False).head(VOCAL_MAX).index.tolist()
+    comp_dict["vocal"] = df.sort_values(by="vocal_score", ascending=False).head(VOCAL_MAX).index.tolist()
+    # comp_dict["vocal"] = df[df["vocal_score"] > VOCAL_THRESHOLD].index.tolist()
+    # if len(comp_dict["vocal"]) > VOCAL_MAX:
+    #     comp_dict["vocal"] = df.sort_values(by="vocal_score", ascending=False).head(VOCAL_MAX).index.tolist()
     print(f"vocal_comp: {comp_dict['vocal']}")
 
     # harmonic
@@ -277,6 +277,14 @@ def main():
         output_file,
         sample_rate,
         reconstructed_audio
+    )
+
+    non_vocal_audio = sum(audio_dict[key] for key in audio_dict if key != "vocal")
+    output_file = audio_filename("non_vocal")
+    utils.save_audio(
+        output_file,
+        sample_rate,
+        non_vocal_audio
     )
 
     utils.save_nmf_analysis(
