@@ -3,7 +3,6 @@ import numpy as np
 
 import utils
 import stft
-import nmf
 import semi_supervised_nmf
 import nmf_sep
 
@@ -15,14 +14,14 @@ def main():
         if not os.path.exists(directory):
             os.makedirs(directory)
             
-    make_dir("Spectograms")
+    make_dir("Spectrograms")
     make_dir("Audio")
-    make_dir("Spectograms/nmf")
+    make_dir("Spectrograms/nmf")
     make_dir("Audio/nmf")
-    make_dir("NMF")
-    make_dir("Audio/NMF/groups")
+    # make_dir("NMF")
+    # make_dir("Audio/NMF/groups")
 
-    # input_file = "Audio/trimmed.wav"
+    input_file = "Audio/trimmed.wav"
     input_file = "Audio/audio.wav"
     output_file = "Audio/reconstructed.wav"
     # duration = 10 # seconds
@@ -37,15 +36,15 @@ def main():
 
     def spectogram_filename(name=None):
         if name:
-            return f"Spectograms/{name}_spectrogram.png"
+            return f"Spectrograms/{name}_spectrogram.png"
         else:
-            return "Spectograms/spectrogram.png"
+            return "Spectrograms/spectrogram.png"
 
     def mask_filename(name=None):
         if name:
-            return f"Spectograms/{name}_mask.png"
+            return f"Spectrograms/{name}_mask.png"
         else:
-            return "Spectograms/mask.png"
+            return "Spectrograms/mask.png"
 
     def audio_filename(name=None):
         if name:
@@ -114,7 +113,7 @@ def main():
     semi_supervised_nmf.save_component_spectrograms(
         B,
         G,
-        output_dir="Spectograms/nmf/new"
+        output_dir="Spectrograms/nmf/new"
     )
 
     nmf_mag = sum(
@@ -128,17 +127,17 @@ def main():
     #     G,
     #     sample_rate=44100,
     #     n_fft=1024,
-    #     output_dir="Spectograms/nmf"
+    #     output_dir="Spectrograms/nmf"
     # )
 
-    df = nmf.analyze_nmf_components(
+    df = nmf_sep.analyze_nmf_components(
         B,
         G,
         sample_rate=sample_rate,
         n_fft=frame_size,
     )
 
-    df_vocal = semi_supervised_nmf.analyze_vocal_features(
+    df_vocal = nmf_sep.analyze_vocal_features(
         B, G,
         sample_rate=sample_rate,
         n_fft=frame_size,
@@ -150,7 +149,7 @@ def main():
         how="left"
     )
 
-    df = semi_supervised_nmf.score_components(df)
+    df = nmf_sep.score_components(df)
 
     # # nmf.rank_nmf_components(df)
 
@@ -270,12 +269,12 @@ def main():
     #     hop_size
     # )
 
-    # # reconstructed_audio = sum(audio_dict.values())
-    # utils.save_audio(
-    #     audio_filename("reconstructed"),
-    #     sample_rate,
-    #     reconstructed_audio
-    # )
+    reconstructed_audio = sum(audio_dict.values())
+    utils.save_audio(
+        audio_filename("reconstructed"),
+        sample_rate,
+        reconstructed_audio
+    )
 
     # error = audio - reconstructed_audio
 
@@ -297,11 +296,10 @@ def main():
     print("Reconstructed:", output_file)
     print("Spectrogram:", spectogram_filename())
 
-    nmf.save_nmf_analysis(df)
+    utils.save_nmf_analysis(df)
 
     # Make audio from all components
-    
-    masks = nmf.nmf_component_masks(B, G)
+    masks = utils.nmf_component_masks(B, G)
 
     for mask_index, mask in enumerate(masks):
 
