@@ -1,8 +1,9 @@
 __pycache__
 .vscode
 Audio
-Spectograms
+Spectrograms
 tempCodeRunnerFile.py
+Comp_30
 
 # Flask app runtime files
 uploads/
