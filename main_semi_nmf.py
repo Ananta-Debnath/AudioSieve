@@ -6,8 +6,6 @@ import stft
 import nmf
 import semi_supervised_nmf
 import nmf_sep
-import drum_mask_gen
-import vocal_mask_gen
 
 def main():
     # -------------------------
