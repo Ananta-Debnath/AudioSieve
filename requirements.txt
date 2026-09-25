@@ -1,7 +1,23 @@
-numpy
-matplotlib
-pydub
-scipy
-soundfile
-flask
-pytest
+# Every third-party package the repo imports, pinned to the versions the
+# app was built and tested with. Needs Python 3.12 or newer (numpy 2.5 and
+# scipy 1.18 do). Install with: pip install -r requirements.txt
+# (run.sh / run.bat do this in a virtual environment for you).
+
+# The app, the separation code and the scripts
+flask==3.1.3
+werkzeug==3.1.8
+numpy==2.5.1
+scipy==1.18.0
+matplotlib==3.11.1
+pandas==3.0.3
+# Decodes and writes all audio (WAV, FLAC, and MP3 without ffmpeg).
+soundfile==0.14.0
+
+# Tests
+pytest==9.1.1
+
+# trim.py only (a separation-track helper, not used by the app). pydub
+# also needs ffmpeg for anything but WAV, and audioop, which Python 3.13
+# removed from the standard library.
+pydub==0.25.1
+audioop-lts==0.2.2; python_version >= "3.13"
