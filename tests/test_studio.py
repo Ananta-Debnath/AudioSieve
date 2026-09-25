@@ -172,6 +172,33 @@ def test_missing_demo_track_is_a_clear_404(client, app_module, tmp_path, monkeyp
     assert "make_placeholder_demo" in res.get_json()["error"]
 
 
+def test_vocals_demo_goes_through_the_normal_upload_path(client, app_module, tmp_path, monkeypatch):
+    song = tmp_path / "song.flac"
+    sf.write(str(song), noise((SR, 2)), SR)
+    monkeypatch.setattr(app_module, "VOCALS_DEMO_PATH", song)
+
+    res = client.post("/upload/demo/vocals")
+    assert res.status_code == 200, res.get_json()
+    meta = res.get_json()
+    assert meta["filename"] == app_module.VOCALS_DEMO_NAME and meta["channels"] == 2
+    run = client.post("/process/separate", json={"file_id": meta["file_id"]})
+    assert run.status_code == 200, run.get_json()
+
+    monkeypatch.setattr(app_module, "VOCALS_DEMO_PATH", tmp_path / "missing.flac")
+    res = client.post("/upload/demo/vocals")
+    assert res.status_code == 404 and "demo_vocals.flac" in res.get_json()["error"]
+
+
+def test_the_vocals_demo_song_is_there():
+    import app as app_module
+
+    info = sf.info(str(app_module.VOCALS_DEMO_PATH))
+    assert info.channels == 2 and info.samplerate == 44100
+    assert 20 <= info.duration <= 60  # an excerpt: quick to separate live
+    credits = (app_module.VOCALS_DEMO_PATH.parent / "CREDITS.txt").read_text(encoding="utf-8")
+    assert app_module.VOCALS_DEMO_PATH.name in credits and "Karissa Hobbs" in credits
+
+
 def test_placeholder_demo_script(tmp_path, monkeypatch, capsys):
     spec = importlib.util.spec_from_file_location(
         "make_placeholder_demo", ROOT / "scripts" / "make_placeholder_demo.py")
@@ -259,7 +286,6 @@ def test_separation_returns_the_contract(client, app_module):
     assert res.status_code == 200, res.get_json()
     data = res.get_json()
     assert {"run_id", "stems"} <= set(data)
-    assert data["truncated"] is False and data["note"] is None
     assert [s["name"] for s in data["stems"]] == list(separation.STEMS)
     total = 0
     for stem in data["stems"]:
@@ -300,36 +326,15 @@ def test_separation_mock_returns_the_contract(client, app_module, monkeypatch):
     assert [s["name"] for s in run["outputs"]["stems"]] == list(separation.STEMS)
 
 
-def test_long_tracks_are_separated_up_to_the_cap(client, app_module, monkeypatch):
+def test_separation_takes_the_whole_track(client, monkeypatch):
     monkeypatch.setenv("SEPARATION_MOCK", "1")
-    monkeypatch.setattr(app_module, "SEPARATION_MAX_SECONDS", 0.25)
-    meta = upload(client, noise(SR), SR)
+    meta = upload(client, noise(90 * SR), SR)  # longer than the old 60 s cap
 
     data = client.post("/process/separate", json={"file_id": meta["file_id"]}).get_json()
-    assert data["truncated"] is True
-    assert data["analysed_seconds"] == pytest.approx(0.25) and data["input_seconds"] == pytest.approx(1.0)
-    assert data["note"] == "Separation analyses the first 0.25 s of the track."
     for stem in data["stems"]:
-        assert sf.info(io.BytesIO(client.get(stem["url"]).data)).duration == pytest.approx(0.25)
-        assert stem["duration"] == pytest.approx(0.25)
-
-    # The page gets the cap, to warn before RUN.
-    assert page_config(client)["limits"]["separation_max_sec"] == 0.25
-    # 0 turns the cap off.
-    monkeypatch.setattr(app_module, "SEPARATION_MAX_SECONDS", 0)
-    data = client.post("/process/separate", json={"file_id": meta["file_id"]}).get_json()
-    assert data["truncated"] is False and data["analysed_seconds"] == pytest.approx(1.0)
-    assert page_config(client)["limits"]["separation_max_sec"] is None
-
-
-def test_separation_cap_defaults_to_60_seconds(monkeypatch):
-    import app as app_module
-
-    assert app_module._env_seconds("SEPARATION_MAX_SECONDS_UNSET_FOR_TEST", 60) == 60
-    monkeypatch.setenv("SEPARATION_MAX_SECONDS", "30")
-    assert app_module._env_seconds("SEPARATION_MAX_SECONDS", 60) == 30
-    monkeypatch.setenv("SEPARATION_MAX_SECONDS", "lots")
-    assert app_module._env_seconds("SEPARATION_MAX_SECONDS", 60) == 60
+        assert sf.info(io.BytesIO(client.get(stem["url"]).data)).duration == pytest.approx(90)
+        assert stem["duration"] == pytest.approx(90)
+    assert "separation_max_sec" not in page_config(client)["limits"]
 
 
 def test_a_server_error_is_json_with_the_reason(client, app_module, monkeypatch):

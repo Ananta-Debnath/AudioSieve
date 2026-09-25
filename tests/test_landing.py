@@ -59,6 +59,17 @@ def test_every_listed_preview_is_served(client):
             assert client.get(preview[key]).status_code == 200, (tool, key)
 
 
+def test_separation_preview_is_the_songs_vocals_with_a_credit(client, app_module):
+    preview = landing_data(client)["previews"].get("separation")
+    if preview is None:
+        pytest.skip("static/landing/clips/separation.json not generated")
+    assert preview["params"] == {"stem": "vocals"} and preview["label_b"] == "STEM: VOCALS"
+    assert preview["phrase"]["source"] == app_module.VOCALS_DEMO_PATH.name
+    assert "Karissa Hobbs" in preview["credit"] and "CC BY-NC-SA" in preview["credit"]
+    # The other previews are from our own demo: no credit.
+    assert not any("credit" in p for tool, p in landing_data(client)["previews"].items() if tool != "separation")
+
+
 def test_hero_spectrum_is_embedded(client):
     hero = landing_data(client)["hero"]
     if hero is None:

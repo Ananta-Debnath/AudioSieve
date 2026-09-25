@@ -1,6 +1,6 @@
 // The source box inside every tool: each tool has its own file. Upload
 // (drag-and-drop or browse), USE SAME FILE (the last file loaded in any
-// tool, reused by file_id without re-uploading) or USE DEMO TRACK.
+// tool, reused by file_id without re-uploading) or the tool's demo track.
 import { CONFIG } from "./config.js";
 import { el, fmtTime, requestJSON } from "./util.js";
 
@@ -19,11 +19,16 @@ function describe(meta) {
   return `${fmtTime(meta.duration, 0)} · ${+(meta.samplerate / 1000).toFixed(1)} kHz · ${channels}`;
 }
 
+// The demo track most tools use; Separation's is a song with vocals.
+export const DEFAULT_DEMO = { url: "/upload/demo", label: "Use demo track" };
+
 export class SourceBox {
   // onLoad(meta) runs whenever this tool gets a new file.
-  constructor(root, onLoad) {
+  // demo: { url, label } of the demo button (the route that registers it).
+  constructor(root, onLoad, demo = DEFAULT_DEMO) {
     this.root = root;
     this.onLoad = onLoad;
+    this.demo = demo;
     this.meta = null;
     const { extensions, max_upload_mb: maxMb, max_duration_sec: maxSec } = CONFIG.limits;
 
@@ -50,7 +55,7 @@ export class SourceBox {
     });
     this.demoButton = el("button", {
       type: "button", class: "btn btn-small", onclick: () => this.useDemo(),
-    }, "Use demo track");
+    }, demo.label);
     this.keepButton = el("button", {
       type: "button", class: "btn btn-small", hidden: true,
       onclick: () => this.showLoaded(),
@@ -167,9 +172,9 @@ export class SourceBox {
 
   async useDemo() {
     this.error.hidden = true;
-    this.setBusy("Loading demo track…");
+    this.setBusy("Loading demo…");
     try {
-      const meta = await requestJSON("/upload/demo", { method: "POST" });
+      const meta = await requestJSON(this.demo.url, { method: "POST" });
       setLastFile(meta);
       this.load(meta);
     } catch (err) {

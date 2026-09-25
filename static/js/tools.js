@@ -5,7 +5,7 @@ import { CONFIG, toolInfo } from "./config.js";
 import { Segmented, Slider, field } from "./controls.js";
 import { Player, StemGroup } from "./player.js";
 import { ResponsePlot, responseQuery } from "./responses.js";
-import { SourceBox } from "./source.js";
+import { DEFAULT_DEMO, SourceBox } from "./source.js";
 import { el, fmtClock, requestJSON } from "./util.js";
 
 const group = (label, ...content) => el("div", { class: "group" }, el("p", { class: "label" }, label), ...content);
@@ -21,7 +21,7 @@ class Tool {
     this.responseSeq = 0;
     this.players = [];
 
-    this.source = new SourceBox(root.querySelector("[data-source]"), () => this.sourceChanged());
+    this.source = new SourceBox(root.querySelector("[data-source]"), () => this.sourceChanged(), this.demo());
     this.runButton = root.querySelector("[data-run]");
     this.runHint = root.querySelector("[data-run-hint]");
     this.runError = root.querySelector("[data-run-error]");
@@ -44,6 +44,11 @@ class Tool {
 
   // ---- hooks for each tool ----------------------------------------
   buildControls(_container) {}
+
+  // The source box's demo button (see source.js).
+  demo() {
+    return DEFAULT_DEMO;
+  }
 
   params() {
     return { ...this.values };
@@ -353,27 +358,25 @@ class FlangerTool extends Tool {
 // 05 Separation (built against the /process/separate contract)
 // ---------------------------------------------------------------------
 
-// The route separates only the first separation_max_sec of a long track.
-const lengthNote = (seconds) => `Separation analyses the first ${seconds} s of the track.`;
+// Each stem's playback level, as a slider spec (see controls.js).
+const STEM_VOLUME = {
+  name: "volume", label: "Volume", symbol: null, unit: "%",
+  min: 0, max: 100, default: 100, step: 1, decimals: 0, scale: "linear",
+};
 
 class SeparationTool extends Tool {
   buildControls(container) {
-    this.capNote = el("p", { class: "note note-warn", hidden: true });
     container.append(el("p", { class: "note" },
-      "No parameters: the separation module decides the stems. Press RUN, then mute, solo or play them all together."),
-    this.capNote);
+      "No parameters: the separation module decides the stems. Press RUN, then set each stem's volume, "
+      + "mute, solo or play them all together. The whole track is separated, so a long one takes a few minutes."));
+  }
+
+  demo() {
+    return { url: "/upload/demo/vocals", label: "Use demo song" };
   }
 
   params() {
     return {};
-  }
-
-  sourceChanged() {
-    super.sourceChanged();
-    const cap = CONFIG.limits.separation_max_sec;
-    const meta = this.source.meta;
-    this.capNote.hidden = !(cap && meta && meta.duration > cap);
-    this.capNote.textContent = cap ? lengthNote(cap) : "";
   }
 
   async showResult(data, seconds) {
@@ -381,22 +384,24 @@ class SeparationTool extends Tool {
     const wrap = el("div", { class: "output" });
     this.output.replaceChildren(wrap);
 
-    if (data.note) wrap.append(el("p", { class: "msg msg-warn" }, data.note));
-
     const originalSlot = el("div");
     wrap.append(originalSlot);
     this.addOriginal(originalSlot, this.source.meta);
 
     const playAll = el("button", { type: "button", class: "btn btn-accent" }, "▶ Play all");
     wrap.append(el("div", { class: "stems-head" },
-      playAll, el("span", { class: "note" }, `${data.stems.length} stems · mute and solo only change playback volume`)));
+      playAll, el("span", { class: "note" }, `${data.stems.length} stems · volume, mute and solo only change playback`)));
 
     const stems = data.stems.map((stem) => {
+      const volume = new Slider(STEM_VOLUME, () => applyVolumes());
+      volume.input.setAttribute("aria-label", `${stem.name} volume`);
+      volume.box.setAttribute("aria-label", `${stem.name} volume value`);
       const body = el("div", { class: "stem-body" });
-      const row = el("div", { class: "stem" }, el("div", { class: "stem-name" }, stem.name), body);
+      const row = el("div", { class: "stem" },
+        el("div", { class: "stem-side" }, el("div", { class: "stem-name" }, stem.name), volume.root), body);
       wrap.append(row);
       const player = new Player(body, { label: stem.name, variant: "stem", source: stem, height: 44, showLabel: false });
-      const entry = { player, row, muted: false, soloed: false };
+      const entry = { player, row, volume, muted: false, soloed: false };
       entry.mute = el("button", {
         type: "button", class: "btn btn-small", "aria-pressed": "false",
         onclick: () => { entry.muted = !entry.muted; applyVolumes(); },
@@ -412,13 +417,15 @@ class SeparationTool extends Tool {
       return entry;
     });
 
-    // Solo wins over mute; volume only, the audio itself is untouched.
+    // Solo wins over mute, then each stem's volume slider applies.
+    // Playback only: the audio itself is untouched.
     const applyVolumes = () => {
       const anySolo = stems.some((s) => s.soloed);
       for (const s of stems) {
         const audible = anySolo ? s.soloed : !s.muted;
-        s.player.setVolume(audible ? 1 : 0);
-        s.row.classList.toggle("is-silent", !audible);
+        const volume = audible ? s.volume.value / 100 : 0;
+        s.player.setVolume(volume);
+        s.row.classList.toggle("is-silent", volume === 0);
         s.mute.setAttribute("aria-pressed", String(s.muted));
         s.solo.setAttribute("aria-pressed", String(s.soloed));
       }

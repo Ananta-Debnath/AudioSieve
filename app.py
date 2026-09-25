@@ -37,6 +37,10 @@ BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 PROCESSED_DIR = BASE_DIR / "processed"
 DEMO_PATH = BASE_DIR / "static" / "demo" / "demo.wav"
+# Separation's demo is a song with vocals (the placeholder above has
+# none): 30 s of Karissa Hobbs' "Let's Go Fishin'" (static/demo/CREDITS.txt).
+VOCALS_DEMO_PATH = BASE_DIR / "static" / "demo" / "demo_vocals.flac"
+VOCALS_DEMO_NAME = "Let's Go Fishin' - Karissa Hobbs.flac"
 # Landing page previews (static files; see scripts/make_landing_assets.py).
 # Separation is "separation" here and in /lab#separation links.
 LANDING_DIR = BASE_DIR / "static" / "landing"
@@ -102,21 +106,6 @@ EFFECTS = {
 # SEPARATION_MOCK=1: /process/separate skips the real separation and
 # returns copies of the input as the stems (a fallback, off by default).
 SEPARATION_MOCK_STEMS = separation.STEMS
-
-
-def _env_seconds(name, default):
-    value = os.environ.get(name, "")
-    try:
-        return float(value) if value.strip() else default
-    except ValueError:
-        log.warning("Ignoring %s=%r (not a number); using %g.", name, value, default)
-        return default
-
-
-# Separation runs on the first SEPARATION_MAX_SECONDS of a track only (0
-# or less: the whole track). It takes about 0.4 s per second of stereo
-# audio, so a 6-minute track would keep the request busy for minutes.
-SEPARATION_MAX_SECONDS = _env_seconds("SEPARATION_MAX_SECONDS", 60)
 
 # Backstage JSON is cached per run; bump this when its shape changes so
 # old caches are ignored.
@@ -408,7 +397,6 @@ def lab():
         "max_upload_mb": MAX_UPLOAD_MB,
         "max_duration_sec": MAX_DURATION_SEC,
         "extensions": sorted(ALLOWED_EXTENSIONS),
-        "separation_max_sec": separation_max_seconds(),
     })
     return render_template("index.html", tools=tools, config=config)
 
@@ -473,6 +461,14 @@ def upload_demo():
     return register_upload(DEMO_PATH.name, lambda path: shutil.copyfile(DEMO_PATH, path))
 
 
+@app.post("/upload/demo/vocals")
+def upload_vocals_demo():
+    """Register Separation's demo song like any upload; returns a file_id."""
+    if not VOCALS_DEMO_PATH.exists():
+        return error("Demo song missing (static/demo/demo_vocals.flac).", 404)
+    return register_upload(VOCALS_DEMO_NAME, lambda path: shutil.copyfile(VOCALS_DEMO_PATH, path))
+
+
 @app.get("/upload/<file_id>")
 def uploaded_audio(file_id):
     """The uploaded file itself, for the ORIGINAL player."""
@@ -492,17 +488,10 @@ def uploaded_waveform(file_id):
     return jsonify(waveform_json(audio, sr))
 
 
-def separation_max_seconds():
-    """The separation length cap in seconds, or None for no cap."""
-    return SEPARATION_MAX_SECONDS if SEPARATION_MAX_SECONDS > 0 else None
-
-
-def separation_note(max_seconds):
-    return f"Separation analyses the first {max_seconds:g} s of the track."
-
-
 @app.post("/process/separate")
 def process_separate():
+    """Separate the whole track. That takes about 0.4 s per second of
+    stereo audio here, so a long track keeps the request busy for minutes."""
     params = request_params()
     file_id = params.pop("file_id", None)
     src = find_upload(file_id)
@@ -510,11 +499,6 @@ def process_separate():
         return error("Unknown or missing file_id. Upload a file first.", 404)
 
     audio, sr = sf.read(str(src), dtype="float32")
-    input_seconds = len(audio) / sr
-    max_seconds = separation_max_seconds()
-    truncated = max_seconds is not None and len(audio) > int(max_seconds * sr)
-    if truncated:
-        audio = audio[:int(max_seconds * sr)]
 
     mock = os.environ.get("SEPARATION_MOCK") == "1"
     if mock:
@@ -530,17 +514,14 @@ def process_separate():
         write_result(stem_id, stem, sr)
         saved.append({"name": name, "file": f"{stem_id}.wav", "audio": stem, **result_urls(stem_id)})
 
-    analysed = {"analysed_seconds": len(audio) / sr, "input_seconds": input_seconds, "truncated": truncated}
     run_registry().add(
-        run_id, "separate", {"mock": mock, "max_seconds": max_seconds}, file_id,
+        run_id, "separate", {"mock": mock}, file_id,
         {"stems": [{"name": s["name"], "file": s["file"]} for s in saved]},
-        sr=sr, source=upload_info(file_id), **analysed,
+        sr=sr, source=upload_info(file_id),
     )
     return jsonify({
         "run_id": run_id,
         "input_url": url_for("uploaded_audio", file_id=file_id),
-        **analysed,
-        "note": separation_note(max_seconds) if truncated else None,
         "stems": [
             {"name": s["name"], "url": s["url"], "download_url": s["download_url"],
              **waveform_json(s["audio"], sr)}
@@ -837,7 +818,7 @@ def backstage_mixture(run_id):
         abort(404)
     path = PROCESSED_DIR / f"{run_id}_mixture.png"
     if not path.exists():
-        audio, sr = backstage.read_mixture(run, run_input(run))
+        audio, sr = backstage.read(run_input(run))
         backstage.save_mixture_png(backstage.mono(audio), sr, path)
     return send_file(path, mimetype="image/png")
 
@@ -854,7 +835,7 @@ def backstage_mask(run_id, stem):
     index = list(files).index(stem)  # the stem name is user-facing; the index names the file
     path = PROCESSED_DIR / f"{run_id}_mask{index}.png"
     if not path.exists():
-        mix, sr = backstage.read_mixture(run, run_input(run))
+        mix, sr = backstage.read(run_input(run))
         audio, _ = backstage.read(files[stem])
         backstage.save_mask_png(backstage.mono(mix), backstage.mono(audio), sr, path)
     return send_file(path, mimetype="image/png")

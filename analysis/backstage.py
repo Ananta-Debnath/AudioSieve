@@ -55,16 +55,6 @@ def read(path):
     return audio, sr
 
 
-def read_mixture(run, path):
-    """A separation run's input, cut to the part that was separated (a
-    long track is only separated up to the route's length cap)."""
-    audio, sr = read(path)
-    seconds = run.get("analysed_seconds")
-    if seconds is not None:
-        audio = audio[:int(round(seconds * sr))]
-    return audio, sr
-
-
 def mono(audio):
     """Mean of the channels (as a matrix product: much faster than
     mean(axis=1) on a long track)."""
@@ -409,7 +399,7 @@ def render_diff(input_path, output_path, diff_png):
 def analyze_separation(run, input_path, stem_paths):
     """stem_paths: [(name, path)]. Levels and envelopes of the mixture
     and each stem; the mask images are drawn on request."""
-    mix, sr = read_mixture(run, input_path)
+    mix, sr = read(input_path)
     stems = []
     for name, path in stem_paths:
         audio, _ = read(path)

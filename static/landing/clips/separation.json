@@ -2,13 +2,14 @@
   "tool": "separation",
   "switch_at_s": 2.92,
   "duration_s": 5.72,
-  "label_b": "STEM: DRUMS",
+  "label_b": "STEM: VOCALS",
   "params": {
-    "stem": "drums"
+    "stem": "vocals"
   },
   "phrase": {
-    "source": "demo.wav",
-    "start_s": 16.25,
+    "source": "demo_vocals.flac",
+    "start_s": 13.7,
     "length_s": 2.8
-  }
+  },
+  "credit": "Song: \u201cLet's Go Fishin'\u201d by Karissa Hobbs \u00b7 CC BY-NC-SA 4.0"
 }

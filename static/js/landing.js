@@ -83,6 +83,7 @@ class Reel {
     this.num = part("card-num");
     this.name = part("card-name");
     this.text = part("card-text");
+    this.credit = part("card-credit");
     this.ab = part("ab");
     this.link = part("card-link");
     this.live = part("reel-live");
@@ -268,6 +269,10 @@ class Reel {
     this.num.textContent = number;
     this.name.textContent = name;
     this.text.textContent = text;
+    // The clip's source, when it isn't our own demo (the separation song).
+    const credit = preview && preview.credit;
+    this.credit.hidden = !credit;
+    this.credit.textContent = credit || "";
     this.link.href = `${page.lab_url}#${tool}`;
     this.link.setAttribute("aria-label", `Open tool: ${name}`);
     this.card.setAttribute("aria-label", `${this.index + 1} of ${this.slides.length}`);

@@ -265,17 +265,6 @@ def test_real_separation_run_shows_its_stems(client):
     assert client.get(data["images"]["mixture"]).status_code == 200
 
 
-def test_capped_separation_analyses_only_the_separated_part(client, app_module, monkeypatch):
-    monkeypatch.setenv("SEPARATION_MOCK", "1")
-    monkeypatch.setattr(app_module, "SEPARATION_MAX_SECONDS", 0.5)
-    data = backstage_json(client, run(client, "separate", upload(client, noise((SR, 2)))))
-
-    assert data["run"]["truncated"] is True and data["run"]["analysed_seconds"] == pytest.approx(0.5)
-    # The mixture is cut to the same 0.5 s as the stems.
-    assert data["levels"]["mixture"]["duration"] == pytest.approx(0.5)
-    assert all(stem["levels"] == data["levels"]["mixture"] for stem in data["stems"])
-
-
 # ---------------------------------------------------------------------
 # Run list, caching, errors
 # ---------------------------------------------------------------------

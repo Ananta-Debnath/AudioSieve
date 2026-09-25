@@ -372,6 +372,13 @@ html {
   line-height: 1.6;
 }
 
+/* Where a preview clip comes from, if not our own demo: the separation
+   song's license asks for a credit. */
+.card-credit {
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+
 .card-foot {
   display: flex;
   flex-wrap: wrap;

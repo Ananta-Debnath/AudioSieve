@@ -36,7 +36,8 @@ BASS_THRESHOLD = 0.6
 VOCAL_SHARE = 3 / 5  # of the components that are still free
 
 # main()'s stem keys -> the names the app shows, in display order.
-STEM_NAMES = {"percussion": "drums", "bass": "bass", "vocal": "vocals", "remaining": "rest"}
+# "harmonics" is whatever pitched sound is left (guitar, keys, strings...).
+STEM_NAMES = {"percussion": "percussion", "bass": "bass", "vocal": "vocals", "remaining": "harmonics"}
 STEMS = tuple(STEM_NAMES.values())
 
 # The NMF starts from random B and G; a fixed seed gives the same stems

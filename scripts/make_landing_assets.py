@@ -1,7 +1,7 @@
 """Make the landing page's preview assets. A one-off: run it by hand and
 commit what it writes under static/landing/.
 
-For each tool it takes one short phrase of the demo track and writes:
+For each tool it takes one short phrase of a demo track and writes:
   clips/<tool>.mp3         the phrase twice: original, then processed
   clips/<tool>.json        when the processed half starts (switch_at_s), ...
   responses/<tool>.svg     the tool's response as one bare line, for the
@@ -20,8 +20,11 @@ The phrase defaults to the loudest 2.8 s of static/demo/demo.wav. A reel
 slide lasts as long as its clip (the phrase twice, plus reverb and echo
 tails), so 2.8 s keeps the slides at about 6 s.
 
-Separation's clip is the drums stem, from the same
-effects.separation.separate() that /process/separate calls.
+Separation's clip comes from the Separation tab's demo song instead
+(demo.wav has no vocals): the song is separated whole, by the same
+effects.separation.separate() that /process/separate calls, and the
+phrase is the loudest stretch of its vocals stem. --start does not apply
+to it. Its JSON carries the song's credit, which the card shows.
 """
 
 import argparse
@@ -41,6 +44,9 @@ from analysis import backstage  # noqa: E402
 from effects import echo, eq_filter, flanger, reverb, separation  # noqa: E402
 
 SOURCE = ROOT / "static" / "demo" / "demo.wav"
+SONG_SOURCE = app.VOCALS_DEMO_PATH
+# CC BY-NC-SA asks for a credit where the song is played (static/demo/CREDITS.txt).
+SONG_CREDIT = "Song: “Let's Go Fishin'” by Karissa Hobbs · CC BY-NC-SA 4.0"
 OUT_DIR = ROOT / "static" / "landing"
 
 PHRASE_SEC = 2.8        # clips of 5.7 s (6.3 s with a tail): about one 6 s slide
@@ -81,28 +87,21 @@ SHOWCASE = {
     "echo": {"mode": "feedback", "delay_ms": 300, "gain": 0.5, "mix": 0.6},
     # Defaults, with the notch depth g near its maximum of 1.
     "flanger": {**{name: limits[2] for name, limits in flanger.PARAMS.items()}, "gain": 0.95},
-    "separation": {"stem": "drums"},
+    "separation": {"stem": "vocals"},
 }
 TAILED = ("reverb", "echo")
-LABEL_B = {"separation": "STEM: DRUMS"}
+LABEL_B = {"separation": "STEM: VOCALS"}
 
 
 # ---------------------------------------------------------------------
 # Processing
 # ---------------------------------------------------------------------
 
-def separated_stem(audio, sr, stem):
-    """One stem of audio, from the separation module /process/separate uses."""
-    return np.asarray(separation.separate(audio, sr)[stem])
-
-
 def process(tool, audio, sr):
-    """The tool's output for audio, with its showcase settings (None if unavailable)."""
+    """The effect's output for audio, with its showcase settings."""
     params = SHOWCASE[tool]
     if tool == "eq":
         return eq_filter.process(audio, sr, params)[0]
-    if tool == "separation":
-        return separated_stem(audio, sr, params["stem"])
     effect = {"reverb": reverb, "echo": echo, "flanger": flanger}[tool]
     return effect.process(audio, sr, **params)[0]
 
@@ -155,7 +154,7 @@ def make_clip(original, processed, sr, tail_fade=EDGE_FADE_SEC):
 
 
 def tool_clip(tool, audio, sr, start, length):
-    """The A/B clip for one tool, or None if the tool is unavailable.
+    """The A/B clip for one effect.
 
     The effect runs on the phrase plus up to PRE_ROLL_SEC before it, and
     the pre-roll is cut off afterwards. Reverb and echo keep TAIL_SEC of
@@ -164,12 +163,21 @@ def tool_clip(tool, audio, sr, start, length):
     first, n = int(start * sr), int(length * sr)
     pre = min(first, int(PRE_ROLL_SEC * sr))
     out = process(tool, audio[first - pre:first + n], sr)
-    if out is None:
-        return None
     tail = int(TAIL_SEC * sr) if tool in TAILED else 0
     processed = out[pre:pre + n + tail]
     return make_clip(audio[first:first + n], processed,
                      sr, TAIL_FADE_SEC if tool in TAILED else EDGE_FADE_SEC)
+
+
+def separation_clip(audio, sr, length):
+    """Separation's A/B clip: the song, separated whole as the Separation
+    tab does it, over the loudest `length` s of the showcased stem.
+    Returns (clip, switch_at_s, start_s)."""
+    stem = np.asarray(separation.separate(audio, sr)[SHOWCASE["separation"]["stem"]])
+    start = loudest_start(stem, sr, length)
+    first, n = int(start * sr), int(length * sr)
+    clip, switch_at = make_clip(audio[first:first + n], stem[first:first + n], sr)
+    return clip, switch_at, start
 
 
 def write_mp3(path, clip, sr):
@@ -312,27 +320,32 @@ def main(argv=None):
         (OUT_DIR / folder).mkdir(parents=True, exist_ok=True)
 
     for tool in SHOWCASE:
-        result = tool_clip(tool, audio, sr, start, args.length)
-        if result is None:
-            continue
-        clip, switch_at = result
-        write_mp3(OUT_DIR / "clips" / f"{tool}.mp3", clip, sr)
+        if tool == "separation":
+            song, song_sr = sf.read(str(SONG_SOURCE), dtype="float64")
+            clip, switch_at, clip_start = separation_clip(song, song_sr, args.length)
+            clip_sr, source, extra = song_sr, SONG_SOURCE, {"credit": SONG_CREDIT}
+        else:
+            clip, switch_at = tool_clip(tool, audio, sr, start, args.length)
+            clip_sr, source, clip_start, extra = sr, SOURCE, start, {}
+        write_mp3(OUT_DIR / "clips" / f"{tool}.mp3", clip, clip_sr)
         meta = {
             "tool": tool,
             "switch_at_s": round(switch_at, 3),
-            "duration_s": round(len(clip) / sr, 3),
+            "duration_s": round(len(clip) / clip_sr, 3),
             "label_b": LABEL_B.get(tool, "PROCESSED"),
             "params": SHOWCASE[tool],
-            "phrase": {"source": SOURCE.name, "start_s": round(start, 3), "length_s": args.length},
+            "phrase": {"source": source.name, "start_s": round(clip_start, 3), "length_s": args.length},
+            **extra,
         }
         (OUT_DIR / "clips" / f"{tool}.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
         if tool == "separation":
             write_spectrogram_png(OUT_DIR / "responses" / "separation.png",
-                                  clip[int(round(switch_at * sr)):], sr)
+                                  clip[int(round(switch_at * clip_sr)):], clip_sr)
         else:
             write_svg(OUT_DIR / "responses" / f"{tool}.svg", *response_line(tool))
-        print(f"  {tool}: switch at {meta['switch_at_s']} s, {meta['duration_s']} s long")
+        print(f"  {tool}: {source.name} from {clip_start:.2f} s, switch at {meta['switch_at_s']} s, "
+              f"{meta['duration_s']} s long")
 
     hero = hero_spectrum(audio, sr)
     (OUT_DIR / "hero.json").write_text(json.dumps(hero, separators=(",", ":")) + "\n", encoding="utf-8")

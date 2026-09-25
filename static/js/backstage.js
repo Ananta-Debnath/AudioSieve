@@ -79,15 +79,10 @@ function paramRows(run) {
     return rows;
   }
   if (run.tool === "separate") {
-    const rows = [
+    return [
       ["Stems", run.outputs.stems.map((s) => s.name).join(", "), ""],
       ["Module", p.mock ? "mock (copies of the input)" : "NMF separation", ""],
     ];
-    if (run.analysed_seconds !== undefined) {
-      rows.push(["Analysed", run.truncated ? `first ${num(run.analysed_seconds, 0)}` : "whole track",
-        run.truncated ? "s" : ""]);
-    }
-    return rows;
   }
   const cfg = CONFIG[run.tool];
   const rows = [];

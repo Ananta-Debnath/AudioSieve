@@ -236,8 +236,10 @@ TOOLS = [
             "frequency at the same moment, the mask cannot split them.",
         ],
         "param_notes": [
-            ("Stems", "One row per separated source; the module decides how many."),
-            ("Mute / solo", "Playback volume 0 or 1 only; nothing is re-processed."),
+            ("Stems", "Percussion, bass, vocals and harmonics: the pitched sound that is left "
+                      "(guitar, keys, strings)."),
+            ("Volume", "Each stem's playback level, 0 to 100 %; nothing is re-processed."),
+            ("Mute / solo", "Silence a stem, or hear only the soloed ones."),
             ("Play all", "Plays every stem in sync, so muting one reveals the rest."),
         ],
     },

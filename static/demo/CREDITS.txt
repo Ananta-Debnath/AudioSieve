@@ -1,0 +1,13 @@
+demo.wav
+    A placeholder made by scripts/make_placeholder_demo.py (sine melody,
+    bass tone, noise bursts). No third-party material.
+
+demo_vocals.flac  (the Separation tab's demo song)
+    "Let's Go Fishin'" by Karissa Hobbs, from the album "Age of Flowers".
+    https://freemusicarchive.org/music/Karissa_Hobbs/Age_of_Flowers/09_Lets_Go_Fishin/
+    Licensed under Creative Commons: the copy in librosa's example data
+    (github.com/librosa/data) lists CC BY 3.0 in its .txt and
+    CC BY-NC-SA 4.0 in its .toml; this excerpt is used under the stricter
+    one, CC BY-NC-SA 4.0 (https://creativecommons.org/licenses/by-nc-sa/4.0/).
+    Changes: cut to 0:08-0:38, 1.5 s fade-out, decoded from Ogg Vorbis to
+    16-bit FLAC.

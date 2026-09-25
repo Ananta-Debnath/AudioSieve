@@ -40,13 +40,17 @@ def warmup():
 
 @pytest.fixture
 def short_demo(app_module, tmp_path, monkeypatch):
-    """A 1 s demo track, so a whole warm-up takes a few seconds."""
+    """1 s demo tracks (the default one and Separation's song), so a
+    whole warm-up takes a few seconds."""
     sr = 22050
     t = np.arange(sr) / sr
     audio = 0.3 * np.sin(2 * np.pi * 110 * t) + 0.05 * np.random.default_rng(0).standard_normal(sr)
     path = tmp_path / "demo.wav"
     sf.write(str(path), audio, sr)
     monkeypatch.setattr(app_module, "DEMO_PATH", path)
+    song = tmp_path / "song.flac"
+    sf.write(str(song), np.stack([audio, 0.5 * audio], axis=1), sr)
+    monkeypatch.setattr(app_module, "VOCALS_DEMO_PATH", song)
     return path
 
 
@@ -101,6 +105,9 @@ def test_warmup_passes_every_tool_with_the_showcase_settings(app_module, warmup,
     from effects import flanger
     assert params["flanger"] == {name: limits[2] for name, limits in flanger.PARAMS.items()}
     assert params["separate"]["mock"] is False
+    # Separation runs on its own demo, the song with vocals.
+    sources = {r["tool"]: r["source"]["filename"] for r in runs}
+    assert sources["separate"] == app_module.VOCALS_DEMO_NAME and sources["echo"] == "demo.wav"
 
 
 def test_warmup_reports_a_failing_tool(app_module, warmup, short_demo, monkeypatch, capsys):

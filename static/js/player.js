@@ -136,8 +136,8 @@ export class Player {
   }
 }
 
-// Stems that PLAY ALL starts together and seeks together. Mute / solo
-// only set each player's volume to 0 or 1 (playback, not processing).
+// Stems that PLAY ALL starts together and seeks together. Volume, mute
+// and solo only set each player's volume (playback, not processing).
 export class StemGroup {
   constructor(members, onChange) {
     this.members = members;

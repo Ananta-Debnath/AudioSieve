@@ -33,7 +33,7 @@ def mix(seconds=1.0, channels=None, seed=0):
 def test_stems_have_the_input_shape_and_are_finite(channels):
     audio = mix(channels=channels)
     stems = separation.separate(audio, SR)
-    assert list(stems) == list(separation.STEMS) == ["drums", "bass", "vocals", "rest"]
+    assert list(stems) == list(separation.STEMS) == ["percussion", "bass", "vocals", "harmonics"]
     for name, stem in stems.items():
         assert stem.shape == audio.shape, name
         assert np.all(np.isfinite(stem)), name

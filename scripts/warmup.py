@@ -1,6 +1,6 @@
-"""Warm-up before the demo: run every tool once on the demo track with
-the demo's showcase settings, through the app's own routes, and print
-PASS / FAIL with timings.
+"""Warm-up before the demo: run every tool once on its demo track (the
+song with vocals for separation) with the demo's showcase settings,
+through the app's own routes, and print PASS / FAIL with timings.
 
     python scripts/warmup.py            # the running app if there is one, else in-process
     python scripts/warmup.py --url http://127.0.0.1:5000
@@ -39,6 +39,10 @@ WARMUP = {
     "flanger": {},
     "separate": {},
 }
+
+# The route that registers each tool's demo track, as the page's demo button does.
+DEMO_ROUTE = "/upload/demo"
+DEMO_ROUTES = {"separate": "/upload/demo/vocals"}
 
 # <script src="http..."> or <link href="http...">: anything the page
 # would load from the internet.
@@ -158,8 +162,6 @@ def run_tool(client, tool, file_id):
     detail = f"run {processed:.1f} s, backstage {backstage:.1f} s"
     if tool == "separate":
         detail += f", {len(data['stems'])} stems"
-        if data.get("note"):
-            detail += f" ({data['note']})"
     return detail
 
 
@@ -184,15 +186,17 @@ def warm_up(client):
     results = []
     step(results, "pages", check_pages, client)
 
-    upload = {}
+    uploads = {}
 
-    def upload_demo():
-        upload.update(fetch_json(client, "/upload/demo", "POST"))
-        return f"{upload['filename']}, {upload['duration']:.1f} s"
+    def upload_demos():
+        for route in dict.fromkeys([DEMO_ROUTE, *DEMO_ROUTES.values()]):
+            uploads[route] = fetch_json(client, route, "POST")
+        return "; ".join(f"{meta['filename']}, {meta['duration']:.1f} s" for meta in uploads.values())
 
-    if step(results, "demo", upload_demo):
+    if step(results, "demo", upload_demos):
         for tool in WARMUP:
-            step(results, tool, run_tool, client, tool, upload["file_id"])
+            file_id = uploads[DEMO_ROUTES.get(tool, DEMO_ROUTE)]["file_id"]
+            step(results, tool, run_tool, client, tool, file_id)
     return results
 
 

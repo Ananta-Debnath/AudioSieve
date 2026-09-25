@@ -19,8 +19,9 @@ itself never loads anything from the internet (scripts and fonts are in `static/
 * `python scripts/warmup.py`, with the app running, runs every tool once on the
   demo track and prints PASS / FAIL per tool.
 * `python -m pytest tests -m "not slow"` runs the fast tests.
-* Long tracks: separation works on the first 60 s only
-  (`SEPARATION_MAX_SECONDS` changes that; `0` means the whole track).
+* Separation works on the whole track: about 0.4 s per second of stereo audio,
+  so a 6-minute song takes a few minutes. Its demo is a song with vocals
+  (credits in `static/demo/CREDITS.txt`).
 * Audio is decoded by soundfile's libsndfile: WAV, FLAC and MP3, no ffmpeg needed.
 
 ## Overview
