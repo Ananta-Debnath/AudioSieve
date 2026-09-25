@@ -393,7 +393,8 @@ p {
 }
 
 /* Sliders: label + live readout, then a 6px track with a cyan fill and
-   a square thumb. Double-click the readout to reset. */
+   a square thumb. The readout is a text box you can type a value into;
+   double-click the track to reset. */
 .slider-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -414,14 +415,54 @@ p {
   font-variant-numeric: tabular-nums;
   color: var(--accent-text);
   white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
+}
+
+/* Looks like the readout; the dashed underline says it can be typed in. */
+.readout-box {
+  box-sizing: content-box;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px dashed var(--line);
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: right;
+  cursor: text;
+  transition: border-color var(--t-fast);
+}
+
+.readout-box:hover {
+  border-bottom-color: var(--fg-dim);
+}
+
+.readout-box:focus {
+  border-bottom-color: var(--accent);
+}
+
+.readout-box[aria-invalid="true"] {
+  border-bottom-color: var(--warn);
+  color: var(--warn);
+}
+
+.readout-box[aria-invalid="true"]:focus-visible {
+  outline-color: var(--warn);
 }
 
 .readout .unit {
   margin-left: 4px;
   font-size: 13px;
   color: var(--fg-dim);
+}
+
+.readout .unit:empty {
+  display: none;
+}
+
+.slider-warn {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--warn);
 }
 
 .slider {
@@ -1024,6 +1065,10 @@ p {
   padding: 10px var(--gutter);
   border-bottom: var(--border);
   background: var(--bg);
+}
+
+.bs-back {
+  flex: none;
 }
 
 .bs-title {

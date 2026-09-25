@@ -1,6 +1,6 @@
 // SPECTRA page bootstrap: header, tabs, drawer, tools, Backstage.
 import { Backstage } from "./backstage.js";
-import { CONFIG } from "./config.js";
+import { CONFIG, toolInfo } from "./config.js";
 import { initDrawer } from "./drawer.js";
 import { installSpaceShortcut } from "./player.js";
 import { initThemeToggle } from "./theme.js";
@@ -14,6 +14,8 @@ installSpaceShortcut();
 const tabs = [...document.querySelectorAll('.tabbar [role="tab"]')];
 const views = new Map(tabs.map((tab) => [tab.dataset.view, document.getElementById(`view-${tab.dataset.view}`)]));
 let currentView = null;
+const backButton = document.querySelector("[data-bs-back]");
+let returnTo = null; // { view, scroll }: the tool tab Backstage was opened from
 
 const app = {
   drawer: initDrawer(),
@@ -23,6 +25,11 @@ const app = {
   // runId (Backstage only): the run to select.
   showView(id, { focusTab = false, runId = null } = {}) {
     if (id === currentView || !views.has(id)) return;
+    if (id === "backstage" && currentView) {
+      returnTo = { view: currentView, scroll: window.scrollY };
+      backButton.querySelector("[data-bs-back-name]").textContent = toolInfo(currentView).name;
+      backButton.hidden = false;
+    }
     currentView = id;
     for (const tab of tabs) {
       const active = tab.dataset.view === id;
@@ -50,6 +57,12 @@ const app = {
 };
 
 app.tools = createTools(app);
+
+// ← BACK TO <TOOL> in Backstage: that tab, scrolled to where it was left.
+backButton.addEventListener("click", () => {
+  app.showView(returnTo.view, { focusTab: true });
+  window.scrollTo(0, returnTo.scroll);
+});
 
 // Tabs: click, or arrow keys / Home / End once a tab has focus.
 tabs.forEach((tab, i) => {
