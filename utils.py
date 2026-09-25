@@ -3,8 +3,10 @@ from scipy.io import wavfile
 import matplotlib.pyplot as plt
 
 
-def load_audio(filename, duration=5):
-    """Load audio and return sample rate and mono audio."""
+def load_audio(filename, duration=None):
+    """Load audio and return sample rate and mono audio.
+    If duration is None, loads the full audio.
+    """
     sample_rate, audio = wavfile.read(filename)
 
     # Convert stereo → mono
@@ -19,8 +21,9 @@ def load_audio(filename, duration=5):
     if max_value > 0:
         audio /= max_value
 
-    # Keep only the requested duration
-    audio = audio[:int(duration * sample_rate)]
+    # Keep only the requested duration if specified
+    if duration is not None:
+        audio = audio[:int(duration * sample_rate)]
 
     return sample_rate, audio
 

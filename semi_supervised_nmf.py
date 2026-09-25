@@ -193,6 +193,31 @@ def initialize_B(K, num_components, random_scale=1.0, seed=None):
     return B
 
 
+def visualize_B_diff(B_init, B, output_dir="Spectograms/nmf/B_diff"):
+    """
+    Create overlapping plot for B initialization and final B after NMF.
+
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    K, J = B.shape
+
+    for j in range(J):
+        plt.figure(figsize=(10, 6))
+        plt.plot(B_init[:, j], label="B_init", color="blue", alpha=0.7)
+        plt.plot(B[:, j], label="B_final", color="orange", alpha=0.7)
+        plt.title(f"Component {j}")
+        plt.xlabel("Frequency Bin (K)")
+        plt.ylabel("Magnitude")
+        plt.legend()
+        plt.grid(True)
+
+        filename = f"B_diff_component_{j:02d}.png"
+        filepath = os.path.join(output_dir, filename)
+        plt.savefig(filepath, bbox_inches='tight', dpi=150)
+        plt.close()
+
+
 def separate_sources_nmf(X, num_components, alpha=100.0, beta=0.0, max_iter=300, tol=1e-4):
     """
     Separates a magnitude spectrogram X into Basis (B) and Gain (G) matrices 
@@ -224,6 +249,8 @@ def separate_sources_nmf(X, num_components, alpha=100.0, beta=0.0, max_iter=300,
     # )
     G = np.abs(np.random.randn(J, T)) + eps
     ones_KT = np.ones((K, T))
+
+    B_init = B.copy()  # Keep a copy of the initial B for visualization
     
     prev_cost = float('inf')
     
@@ -286,6 +313,13 @@ def separate_sources_nmf(X, num_components, alpha=100.0, beta=0.0, max_iter=300,
         # Optional: Calculate convergence cost here using divergence, temporal, and sparseness costs
         # (Omitted for loop speed, assuming fixed max_iter for standard audio processing workflows)
 
+    # Visualize the difference between initial and final B
+    visualize_B_diff(B_init, B)
+
+    score = evaluate_decomposition(X, B, G, verbose=True)
+    print(f"Final decomposition score: {score:.6f}")
+    print()
+
     return B, G
 
 
@@ -332,6 +366,7 @@ def save_component_spectrograms(B, G, output_dir="component_spectrograms"):
         plt.close()
         
     print(f"Successfully saved {J} spectrograms to the '{output_dir}' directory.")
+    print()
 
 # Example usage (assuming B and G were returned from the previous NMF function):
 # save_component_spectrograms(B, G)
@@ -1025,9 +1060,9 @@ def analyze_vocal_features(
         })
 
     df = pd.DataFrame(results)
-    df.to_csv("nmf_vocal_features.csv", index=False)
+    # df.to_csv("nmf_vocal_features.csv", index=False)
 
-    return pd.DataFrame(results)
+    return df
 
 
 def normalize_column(column):
@@ -1307,3 +1342,215 @@ def get_framewise_vocal_mask(
     print("fraction > 0.5:", np.mean(mask > 0.5))
 
     return vocal_mask, non_vocal_mask
+
+
+def evaluate_decomposition(X, W, H, verbose=False, epsilon=1e-10):
+    """
+    Evaluate an NMF decomposition X ≈ W @ H.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        Original magnitude spectrogram, shape (K, T).
+
+    W : np.ndarray
+        NMF basis matrix, shape (K, R).
+
+    H : np.ndarray
+        NMF activation matrix, shape (R, T).
+
+    verbose : bool
+        If True, print the individual scores.
+
+    epsilon : float
+        Small value to avoid division by zero.
+
+    Returns
+    -------
+    normalized_score : float
+        Overall score in [0, 1].
+        Higher is better.
+    """
+
+    X = np.maximum(X, 0)
+    W = np.maximum(W, 0)
+    H = np.maximum(H, 0)
+
+    R = W.shape[1]
+
+    # ---------------------------------------------------------
+    # 1. Reconstruction quality
+    # ---------------------------------------------------------
+
+    reconstruction = W @ H
+
+    reconstruction_error = (
+        np.linalg.norm(X - reconstruction, 'fro')
+        / (np.linalg.norm(X, 'fro') + epsilon)
+    )
+
+    # Convert error to a score.
+    reconstruction_score = 1.0 / (1.0 + reconstruction_error)
+
+
+    # ---------------------------------------------------------
+    # 2. Component distinctness
+    # ---------------------------------------------------------
+
+    # Each component's actual contribution:
+    #
+    # component_r = W[:, r] outer H[r, :]
+    #
+    # Shape: (K, T)
+
+    components = []
+
+    for r in range(R):
+        component = np.outer(W[:, r], H[r, :])
+        component = component / (
+            np.linalg.norm(component) + epsilon
+        )
+        components.append(component)
+
+    components = np.asarray(components)
+
+    similarities = []
+
+    for i in range(R):
+        for j in range(i + 1, R):
+
+            similarity = np.sum(
+                components[i] * components[j]
+            )
+
+            similarities.append(similarity)
+
+    if similarities:
+        mean_similarity = np.mean(similarities)
+    else:
+        mean_similarity = 0.0
+
+    # Low similarity is good.
+    distinctness_score = 1.0 - mean_similarity
+    distinctness_score = np.clip(
+        distinctness_score, 0.0, 1.0
+    )
+
+
+    # ---------------------------------------------------------
+    # 3. Component activation diversity
+    # ---------------------------------------------------------
+
+    # Normalize each H row so its magnitude doesn't dominate
+    # the comparison.
+
+    H_norm = H / (
+        np.linalg.norm(H, axis=1, keepdims=True) + epsilon
+    )
+
+    activation_similarities = []
+
+    for i in range(R):
+        for j in range(i + 1, R):
+
+            similarity = np.dot(
+                H_norm[i],
+                H_norm[j]
+            )
+
+            activation_similarities.append(similarity)
+
+    if activation_similarities:
+        mean_activation_similarity = np.mean(
+            activation_similarities
+        )
+    else:
+        mean_activation_similarity = 0.0
+
+    activation_diversity_score = (
+        1.0 - mean_activation_similarity
+    )
+
+    activation_diversity_score = np.clip(
+        activation_diversity_score,
+        0.0,
+        1.0
+    )
+
+
+    # ---------------------------------------------------------
+    # 4. Spectral diversity
+    # ---------------------------------------------------------
+
+    W_norm = W / (
+        np.linalg.norm(W, axis=0, keepdims=True) + epsilon
+    )
+
+    spectral_similarities = []
+
+    for i in range(R):
+        for j in range(i + 1, R):
+
+            similarity = np.dot(
+                W_norm[:, i],
+                W_norm[:, j]
+            )
+
+            spectral_similarities.append(similarity)
+
+    if spectral_similarities:
+        mean_spectral_similarity = np.mean(
+            spectral_similarities
+        )
+    else:
+        mean_spectral_similarity = 0.0
+
+    spectral_diversity_score = (
+        1.0 - mean_spectral_similarity
+    )
+
+    spectral_diversity_score = np.clip(
+        spectral_diversity_score,
+        0.0,
+        1.0
+    )
+
+
+    # ---------------------------------------------------------
+    # Combine scores
+    # ---------------------------------------------------------
+
+    scores = {
+        "reconstruction": reconstruction_score,
+        "component_distinctness": distinctness_score,
+        "activation_diversity": activation_diversity_score,
+        "spectral_diversity": spectral_diversity_score,
+    }
+
+    # Equal weighting for now.
+    normalized_score = np.mean(
+        list(scores.values())
+    )
+
+    normalized_score = float(
+        np.clip(normalized_score, 0.0, 1.0)
+    )
+
+
+    # ---------------------------------------------------------
+    # Print results
+    # ---------------------------------------------------------
+
+    if verbose:
+
+        print("\nDecomposition evaluation:")
+
+        for name, score in scores.items():
+            print(f"  {name:25s}: {score:.4f}")
+
+        print(
+            f"  {'NORMALIZED SCORE':25s}: "
+            f"{normalized_score:.4f}"
+        )
+
+    return normalized_score

@@ -24,9 +24,15 @@ def main():
     make_dir("NMF")
     make_dir("Audio/NMF/groups")
 
-    input_file = "Audio/trimmed.wav"
+    # input_file = "Audio/trimmed.wav"
+    input_file = "Audio/audio.wav"
     output_file = "Audio/reconstructed.wav"
-    duration = 10 # seconds
+    # duration = 10 # seconds
+    duration = None
+
+    FRAME_TIME = 40 # ms
+    OVERLAP = 0.5 # 50% overlap
+    NUM_COMPONENTS = 20
 
     frame_size = 1024
     hop_size = 512
@@ -65,6 +71,15 @@ def main():
         duration=duration
     )
 
+    def next_power_of_two(x):
+        return 1 << (x - 1).bit_length()
+
+    frame_size = int(sample_rate * FRAME_TIME / 1000)
+    frame_size = next_power_of_two(frame_size)
+    hop_size = int(frame_size * (1 - OVERLAP))
+    print(f"frame_size: {frame_size}, hop_size: {hop_size}")
+    print()
+
     spectra = stft.calculatr_stft(
         audio,
         frame_size,
@@ -91,11 +106,12 @@ def main():
 
     B, G = semi_supervised_nmf.separate_sources_nmf(
         X=magnitude.T,
-        num_components=20,
+        num_components=NUM_COMPONENTS,
     )
 
     print(f"B.shape: {B.shape}")
     print(f"G.shape: {G.shape}")
+    print()
 
     semi_supervised_nmf.save_component_spectrograms(
         B,
@@ -146,14 +162,17 @@ def main():
     # Separation
     # -------------------------
     PERCUSSION_THRESHOLD = 0.25
+    PERCUSSION_MIN = 2
     BASS_THRESHOLD = 0.6
-    VOCAL_THRESHOLD = 0.6
+    VOCAL_THRESHOLD = 0.62
     # VOCAL_THRESHOLD = 0.45
     HARMONIC_THRESHOLD = 0.525
 
     # percussion
     # comp_dict["percussion"] = df.sort_values(by="percussion_score", ascending=False).head(2).index.tolist()
     comp_dict["percussion"] = df[df["percussion_score"] > PERCUSSION_THRESHOLD].index.tolist()
+    if len(comp_dict["percussion"]) < PERCUSSION_MIN:
+        comp_dict["percussion"] = df.sort_values(by="percussion_score", ascending=False).head(PERCUSSION_MIN).index.tolist()
     print(f"percussion_comp: {comp_dict['percussion']}")
 
     # bass
@@ -161,9 +180,15 @@ def main():
     comp_dict["bass"] = df[df["bass_score"] > BASS_THRESHOLD].index.tolist()
     print(f"bass_comp: {comp_dict['bass']}")
 
+    comp_used = sum(comp_dict.values(), [])
+    VOCAL_MAX = (NUM_COMPONENTS - len(comp_used)) * (3/5)
+    VOCAL_MAX = int(VOCAL_MAX)
+
     # vocal
     # comp_dict["vocal"] = df.sort_values(by="vocal_score", ascending=False).head(4).index.tolist()
     comp_dict["vocal"] = df[df["vocal_score"] > VOCAL_THRESHOLD].index.tolist()
+    if len(comp_dict["vocal"]) > VOCAL_MAX:
+        comp_dict["vocal"] = df.sort_values(by="vocal_score", ascending=False).head(VOCAL_MAX).index.tolist()
     print(f"vocal_comp: {comp_dict['vocal']}")
 
     # harmonic
@@ -174,6 +199,8 @@ def main():
     comp_used = sum(comp_dict.values(), [])
     comp_dict["remaining"] = [i for i in range(B.shape[1]) if i not in comp_used]
     print(f"remaining_comp: {comp_dict['remaining']}")
+
+    print()
 
     for key, comp in comp_dict.items():
         mask_dict[key] = nmf_sep.get_custom_mask(
@@ -191,7 +218,8 @@ def main():
     # mask_dict["vocal"] = vocal_mask
     # mask_dict["remaining"] = non_vocal_mask
 
-    mask_dict["rest"] = nmf_sep.get_rest_mask(mask_dict)
+    # mask_dict["rest"] = nmf_sep.get_rest_mask(mask_dict)
+    nmf_sep.get_rest_mask(mask_dict)
 
     for key, mask in mask_dict.items():
         spectra_dict[key] = utils.apply_mask(spectra, mask)
@@ -230,12 +258,50 @@ def main():
             audio
         )
 
+    # r_spectra = np.zeros_like(spectra)
+    # for key, audio in audio_dict.items():
+    #     r_spectra += stft.calculatr_stft(
+    #         audio,
+    #         frame_size,
+    #         hop_size
+    #     )
+    # r_spectra = sum(spectra_dict.values())
+    # reconstructed_audio = stft.calculate_istft(
+    #     r_spectra,
+    #     frame_size,
+    #     hop_size
+    # )
+
+    # # reconstructed_audio = sum(audio_dict.values())
+    # utils.save_audio(
+    #     audio_filename("reconstructed"),
+    #     sample_rate,
+    #     reconstructed_audio
+    # )
+
+    # error = audio - reconstructed_audio
+
+    # print()
+    # print("Max error:", np.max(np.abs(error)))
+    # print("RMSE:", np.sqrt(np.mean(error**2)))
+    # print()
+
+    # mask_sum = sum(mask_dict.values())
+    # mask_diff = mask_sum - np.ones_like(mask_sum)
+    # print("Max mask sum:", np.max(mask_sum))
+    # print("Min mask sum:", np.min(mask_sum))
+    # print("Max mask diff:", np.max(mask_diff))
+    # print("Min mask diff:", np.min(mask_diff))
+    # print()
+
     print("Done!")
     print("Original:", input_file)
     print("Reconstructed:", output_file)
     print("Spectrogram:", spectogram_filename())
 
     nmf.save_nmf_analysis(df)
+
+    # Make audio from all components
     
     masks = nmf.nmf_component_masks(B, G)
 
