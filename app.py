@@ -34,6 +34,10 @@ BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 PROCESSED_DIR = BASE_DIR / "processed"
 DEMO_PATH = BASE_DIR / "static" / "demo" / "demo.wav"
+# Landing page previews (static files; see scripts/make_landing_assets.py).
+# Separation is "separation" here and in /lab#separation links.
+LANDING_DIR = BASE_DIR / "static" / "landing"
+LANDING_TOOLS = ("eq", "reverb", "echo", "flanger", "separation")
 
 ALLOWED_EXTENSIONS = {"wav", "mp3", "flac"}
 MAX_UPLOAD_MB = 50
@@ -324,8 +328,43 @@ def too_large(_e):
     return error(f"File too large (max {MAX_UPLOAD_MB} MB).", 413)
 
 
+def landing_previews():
+    """The reel's preview assets (made by scripts/make_landing_assets.py),
+    per tool: the clip's metadata plus the clip and card background URLs.
+    A tool without a generated clip is left out, and its card says so.
+    Read here, so the page itself makes no requests for them."""
+    previews = {}
+    for tool in LANDING_TOOLS:
+        try:
+            meta = json.loads((LANDING_DIR / "clips" / f"{tool}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        preview = {**meta, "clip_url": url_for("static", filename=f"landing/clips/{tool}.mp3")}
+        for ext in ("svg", "png"):
+            if (LANDING_DIR / "responses" / f"{tool}.{ext}").exists():
+                preview["background_url"] = url_for("static", filename=f"landing/responses/{tool}.{ext}")
+                break
+        previews[tool] = preview
+    return previews
+
+
+def landing_hero():
+    """The demo track's spectrum over time for the hero's backdrop (see
+    make_landing_assets.py), or None: the page then draws the grid only."""
+    try:
+        return json.loads((LANDING_DIR / "hero.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 @app.get("/")
-def index():
+def landing():
+    page = {"lab_url": url_for("lab"), "previews": landing_previews(), "hero": landing_hero()}
+    return render_template("landing.html", page=page)
+
+
+@app.get("/lab")
+def lab():
     tools = {tool["id"]: tool for tool in ui_config.TOOLS}
     config = ui_config.page_config({
         "max_upload_mb": MAX_UPLOAD_MB,

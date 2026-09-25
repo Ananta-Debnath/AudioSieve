@@ -17,6 +17,15 @@ let currentView = null;
 const backButton = document.querySelector("[data-bs-back]");
 let returnTo = null; // { view, scroll }: the tool tab Backstage was opened from
 
+// Deep links: /lab#reverb opens that tab, and the hash follows the open
+// tab. Links say #separation for the "separate" view.
+const HASH_ALIASES = { separation: "separate" };
+const viewFromHash = () => {
+  const name = decodeURIComponent(window.location.hash.slice(1)).toLowerCase();
+  return HASH_ALIASES[name] || name;
+};
+const hashFor = (id) => Object.keys(HASH_ALIASES).find((name) => HASH_ALIASES[name] === id) || id;
+
 const app = {
   drawer: initDrawer(),
   backstage: new Backstage(document.getElementById("view-backstage")),
@@ -31,6 +40,8 @@ const app = {
       backButton.hidden = false;
     }
     currentView = id;
+    // replaceState: switching tabs adds no history entries and fires no hashchange.
+    history.replaceState(null, "", `#${hashFor(id)}`);
     for (const tab of tabs) {
       const active = tab.dataset.view === id;
       tab.setAttribute("aria-selected", String(active));
@@ -76,4 +87,8 @@ tabs.forEach((tab, i) => {
   });
 });
 
-app.showView(tabs[0].dataset.view);
+window.addEventListener("hashchange", () => {
+  if (views.has(viewFromHash())) app.showView(viewFromHash());
+});
+
+app.showView(views.has(viewFromHash()) ? viewFromHash() : tabs[0].dataset.view);

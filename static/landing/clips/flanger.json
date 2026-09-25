@@ -1,0 +1,17 @@
+{
+  "tool": "flanger",
+  "switch_at_s": 2.92,
+  "duration_s": 5.72,
+  "label_b": "PROCESSED",
+  "params": {
+    "min_delay_ms": 1,
+    "sweep_ms": 3,
+    "rate_hz": 0.25,
+    "gain": 0.95
+  },
+  "phrase": {
+    "source": "demo.wav",
+    "start_s": 16.25,
+    "length_s": 2.8
+  }
+}

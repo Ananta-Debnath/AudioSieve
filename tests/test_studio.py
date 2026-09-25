@@ -289,7 +289,7 @@ def test_separation_mock_needs_a_known_file(client, monkeypatch):
 # ---------------------------------------------------------------------
 
 def page_config(client):
-    html = client.get("/").get_data(as_text=True)
+    html = client.get("/lab").get_data(as_text=True)
     assert "<title>SPECTRA</title>" in html
     start = html.index('<script id="spectra-config" type="application/json">')
     start = html.index(">", start) + 1

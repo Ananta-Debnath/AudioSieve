@@ -1,0 +1,584 @@
+/* SPECTRA landing page. Loaded after style.css: its tokens, buttons,
+   theme toggle, focus ring and reduced-motion rule all apply here too. */
+
+:root {
+  --topbar-h: 56px;
+}
+
+/* How strong the faint background layers are. A light background needs
+   more: the same opacity that reads on dark all but vanishes on white. */
+:root,
+:root[data-theme="dark"] {
+  --faint-trace: 0.18;  /* reel card: the tool's response, in --fg */
+  --plot-fill: 0.05;    /* hero: area under the spectrum, in --fg */
+  --plot-line: 0.45;    /* hero: the spectrum line, in --accent-text */
+}
+
+:root[data-theme="light"] {
+  --faint-trace: 0.32;
+  --plot-fill: 0.07;
+  --plot-line: 0.6;
+}
+
+html {
+  scroll-padding-top: var(--topbar-h);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* One 960px column for everything: the wordmark tops out at ~955px. */
+.wrap {
+  width: 100%;
+  max-width: calc(960px + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+/* Primary call to action: a cyan block. */
+.cta {
+  min-height: 52px;
+  padding: 12px 24px;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.cta:hover {
+  border-color: var(--accent);
+  filter: brightness(1.12);
+}
+
+.text-link {
+  font: 500 14px/1.2 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg);
+  text-decoration: underline 2px var(--line);
+  text-underline-offset: 6px;
+  transition: text-decoration-color var(--t-fast);
+}
+
+.text-link:hover {
+  text-decoration-color: var(--accent);
+}
+
+/* ------------------------------------------------------------------ */
+/* Top bar                                                             */
+/* ------------------------------------------------------------------ */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--topbar-h);
+  padding: 8px var(--gutter);
+  border-bottom: var(--border);
+  background: var(--bg);
+}
+
+.topbar-name {
+  font: 800 1.6rem/1 var(--font-head);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.topbar .theme-toggle {
+  min-height: 36px;
+  padding: 7px 12px;
+}
+
+/* "Off" / "On" keep the same width, so the button doesn't jump. */
+.sound-state {
+  display: inline-block;
+  min-width: 3ch;
+  text-align: left;
+}
+
+/* ------------------------------------------------------------------ */
+/* Hero: the wordmark is the design                                    */
+/* ------------------------------------------------------------------ */
+
+.hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: calc(100vh - var(--topbar-h));
+  min-height: calc(100svh - var(--topbar-h));
+  padding: 48px 0;
+  overflow: hidden;
+}
+
+.hero > .wrap {
+  position: relative; /* above the plot */
+}
+
+/* Backdrop: a log-frequency plot across the whole hero, with the demo
+   track's spectrum drifting over it (drawn by landing.js). */
+.hero-plot {
+  position: absolute;
+  inset: 20px var(--gutter) 14px;
+  pointer-events: none;
+}
+
+.hero-plot svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: calc(100% - 26px);
+  overflow: visible;
+}
+
+.plot-grid {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.plot-grid-minor {
+  opacity: 0.5;
+}
+
+.plot-fill {
+  fill: var(--fg);
+  opacity: var(--plot-fill);
+}
+
+.plot-line {
+  fill: none;
+  stroke: var(--accent-text);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  opacity: var(--plot-line);
+}
+
+.plot-labels {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 14px;
+}
+
+.plot-labels span,
+.plot-caption {
+  font: 500 12px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.plot-labels span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.plot-caption {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.wordmark {
+  margin: 0;
+  font: 800 clamp(6rem, 22vw, 20rem)/0.85 var(--font-head);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+
+.tagline {
+  margin-top: clamp(16px, 2.5vw, 32px);
+  font-size: clamp(1.1rem, 1.6vw, 1.25rem);
+  color: var(--fg-dim);
+}
+
+.wordmark,
+.tagline {
+  animation: rise 400ms ease-out both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20px 32px;
+  margin-top: clamp(28px, 4vw, 44px);
+}
+
+/* ------------------------------------------------------------------ */
+/* Sections                                                            */
+/* ------------------------------------------------------------------ */
+
+.section {
+  padding: clamp(56px, 9vw, 112px) 0;
+  border-top: var(--border);
+}
+
+.section-title {
+  margin: 0 0 clamp(24px, 3vw, 36px);
+  font: 800 clamp(2.25rem, 5vw, 3.5rem)/0.95 var(--font-head);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tools reel                                                          */
+/* ------------------------------------------------------------------ */
+
+.reel {
+  position: relative;
+  outline-offset: 6px;
+}
+
+/* One segment per slide, like stories: done = full, current = filling. */
+.reel-progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.reel-seg {
+  flex: 1;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.reel-seg-bar {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  background: var(--line);
+  transition: background-color var(--t-fast);
+}
+
+.reel-seg:hover .reel-seg-bar {
+  background: var(--fg-dim);
+}
+
+.reel-seg-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+/* Hold = pause, tap = step: no selection, callout or context menu. */
+.reel-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* The tool's response, large and faint. A line (SVG) is a mask painted
+   in --fg, so it follows the theme; an image is shown as it is. */
+.card-bg {
+  position: absolute;
+  inset: 12% 0;
+  opacity: var(--faint-trace);
+  pointer-events: none;
+}
+
+.card-bg.is-line {
+  background: var(--fg);
+  -webkit-mask: var(--bg-url) center / 100% 100% no-repeat;
+  mask: var(--bg-url) center / 100% 100% no-repeat;
+}
+
+.card-bg.is-image {
+  inset: 0;
+  background: var(--bg-url) center / cover no-repeat;
+}
+
+.card-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: clamp(20px, 4vw, 44px);
+}
+
+.reel-card.is-entering .card-body,
+.reel-card.is-entering .card-bg {
+  animation: fade-in 200ms ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+.card-title {
+  margin: 0;
+  font: 800 clamp(2.5rem, 7vw, 5.5rem)/0.9 var(--font-head);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.card-num {
+  color: var(--accent-text);
+}
+
+.card-text {
+  max-width: 60ch;
+  font-size: clamp(14px, 1.5vw, 16px);
+  line-height: 1.6;
+}
+
+.card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+}
+
+/* Which half of the clip is playing: the player colours from the Studio. */
+.ab {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: var(--border);
+  border-left: 6px solid var(--fg);
+  background: var(--bg);
+  font: 700 14px/1.2 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg);
+  transition: color var(--t-fast), border-color var(--t-fast);
+}
+
+.ab.is-b {
+  border-left-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.ab.is-soon {
+  border-left-color: var(--line);
+  color: var(--fg-dim);
+}
+
+.reel-hint {
+  margin-top: 14px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ */
+/* How it's built                                                      */
+/* ------------------------------------------------------------------ */
+
+.flow {
+  margin: 0;
+}
+
+.flow-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.flow-wide {
+  max-width: 900px;
+}
+
+.flow-tall {
+  display: none;
+  max-width: 460px;
+}
+
+.flow-line,
+.flow-box {
+  stroke: var(--fg-dim);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.flow-line {
+  fill: none;
+}
+
+.flow-box {
+  fill: var(--panel);
+}
+
+.flow-head {
+  fill: var(--fg-dim);
+}
+
+.flow-step {
+  font: 500 14px var(--font-mono);
+  fill: var(--fg);
+  text-anchor: middle;
+}
+
+.flow-tall .flow-step {
+  font-size: 13px;
+}
+
+.flow-dim {
+  fill: var(--fg-dim);
+}
+
+.flow-tools {
+  font: 500 12px var(--font-mono);
+  letter-spacing: 0.06em;
+  fill: var(--accent-text);
+}
+
+/* Encoding as everywhere: x[n] original (--fg), y[n] processed (cyan). */
+.flow-io {
+  font: 700 16px var(--font-mono);
+  fill: var(--fg);
+}
+
+.flow-out {
+  fill: var(--accent-text);
+}
+
+.flow-caption {
+  margin-top: 24px;
+  color: var(--fg-dim);
+}
+
+/* 2px gaps show --line through: a ruled 2 × 2 grid. */
+.facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  margin-top: clamp(40px, 6vw, 72px);
+  border: var(--border);
+  background: var(--line);
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: clamp(20px, 3vw, 32px);
+  background: var(--bg);
+}
+
+.fact-title {
+  margin: 0;
+  font: 800 clamp(1.6rem, 2.6vw, 2.1rem)/0.95 var(--font-head);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.fact p {
+  max-width: 48ch;
+  color: var(--fg-dim);
+}
+
+.built-cta {
+  margin-top: clamp(40px, 6vw, 64px);
+}
+
+/* ------------------------------------------------------------------ */
+/* Footer                                                              */
+/* ------------------------------------------------------------------ */
+
+.footer {
+  border-top: var(--border);
+}
+
+.footer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding-top: 24px;
+  padding-bottom: 24px;
+  font: 500 14px/1.4 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ------------------------------------------------------------------ */
+/* Narrow screens                                                      */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 899px) {
+  .flow-wide {
+    display: none;
+  }
+
+  .flow-tall {
+    display: block;
+  }
+}
+
+@media (max-width: 699px) {
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .reel-card {
+    aspect-ratio: auto;
+    min-height: 360px;
+  }
+}
+
+/* The hero and the reel each have their own way into the lab. */
+@media (max-width: 599px) {
+  .topbar-cta {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
