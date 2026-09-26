@@ -47,8 +47,8 @@ LANDING_DIR = BASE_DIR / "static" / "landing"
 LANDING_TOOLS = ("eq", "reverb", "echo", "flanger", "separation")
 
 ALLOWED_EXTENSIONS = {"wav", "mp3", "flac"}
-MAX_UPLOAD_MB = 50
-MAX_DURATION_SEC = 6 * 60
+MAX_UPLOAD_MB = 200
+MAX_DURATION_SEC = 20 * 60
 
 # Every file is decoded by soundfile's libsndfile, ffmpeg is never used.
 # libsndfile reads MP3 from version 1.1 on (the soundfile wheels bundle
