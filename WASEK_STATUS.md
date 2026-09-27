@@ -61,7 +61,11 @@ Files: [templates/index.html](templates/index.html),
   and a synced PLAY ALL. Mute/solo only change playback volume.
 - SEND TO (added after stage 06): a menu of all five tools, the result's own tool included.
   The result becomes that tool's source and its tab opens, without a download and
-  re-upload. It is named after its chain, e.g. `demo · reverb · echo + delay.wav`.
+  re-upload.
+- Downloads (and sent results) are named `<source>_<what made it>.wav`: `abc_radio filter.wav`,
+  `abc_lowpass filter.wav`, `abc_feedback echo.wav`, `abc_vocals.wav`; chains add on,
+  e.g. `abc_radio filter_reverb.wav`. The EQ tab sends the preset its sliders show as
+  `preset_name`; that only names the file, and it is dropped once a slider is moved.
 - HOW IT WORKS drawer per tool (equation, a short explanation, one line per parameter).
   It is non-modal and closes with ✕, Esc or the button.
 - Placeholder demo track: [static/demo/demo.wav](static/demo/demo.wav), made by
@@ -96,7 +100,7 @@ API responses only gained fields in stage 04; nothing was renamed or removed.
 | --- | --- |
 | `POST /upload` | Returns `file_id`, filename, duration, sample rate, channels and a playable `url` |
 | `POST /upload/demo` | Registers `static/demo/demo.wav` like a normal upload |
-| `POST /upload/result/<result_id>` | SEND TO: registers a result or stem (stems carry a `result_id`) like a normal upload; optional JSON `name` |
+| `POST /upload/result/<result_id>` | SEND TO: registers a result or stem (stems carry a `result_id`) like a normal upload, under its download name |
 | `GET /upload/<id>` and `/upload/<id>/waveform` | The uploaded file, and its min/max envelope for the ORIGINAL player |
 | `POST /process/<eq\|reverb\|echo\|flanger>` | Runs the effect. Returns `run_id`, result and download URLs, spectrograms, waveform peaks and (for EQ) the curve |
 | `POST /process/separate` | 501 until the merge; the contract (below) with `SEPARATION_MOCK=1` |

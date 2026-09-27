@@ -14,12 +14,11 @@ document.addEventListener("pointerdown", (e) => {
 });
 
 export class SendTo {
-  // resultId: the result to send; name: what the new source is called
-  // (the server adds ".wav"); fromTool: the tool the result came from.
-  constructor(app, { resultId, name, fromTool, small = false }) {
+  // resultId: the result to send (the server names it, as its download);
+  // fromTool: the tool the result came from.
+  constructor(app, { resultId, fromTool, small = false }) {
     this.app = app;
     this.resultId = resultId;
-    this.name = name;
     this.sending = false;
 
     this.button = el("button", {
@@ -98,9 +97,7 @@ export class SendTo {
     this.error.hidden = true;
     this.button.textContent = "Sending…";
     try {
-      const meta = await requestJSON(`/upload/result/${this.resultId}`, {
-        method: "POST", json: { name: this.name },
-      });
+      const meta = await requestJSON(`/upload/result/${this.resultId}`, { method: "POST" });
       this.close();
       // Sending to its own tool replaces this output (and this menu).
       this.app.sendTo(toolId, meta);

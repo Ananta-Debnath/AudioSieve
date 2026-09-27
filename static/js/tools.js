@@ -170,11 +170,9 @@ class Tool {
     this.output.replaceChildren(el("p", { class: "empty" }, "No output yet. Load a track and press RUN."));
   }
 
-  // SEND TO for one result; it is called "<source name> · <madeBy>", so a
-  // chain reads "demo · reverb · echo + delay".
-  sendTo(resultId, madeBy, { small = false } = {}) {
-    const source = this.source.meta.filename.replace(/\.[^.]*$/, "");
-    return new SendTo(this.app, { resultId, name: `${source} · ${madeBy}`, fromTool: this.id, small }).root;
+  // SEND TO for one result (the server names it, e.g. "abc_reverb.wav").
+  sendTo(resultId, { small = false } = {}) {
+    return new SendTo(this.app, { resultId, fromTool: this.id, small }).root;
   }
 
   outputActions(data, seconds, ...extra) {
@@ -197,7 +195,7 @@ class Tool {
     ];
     wrap.append(this.outputActions(data, seconds,
       el("a", { class: "btn btn-accent", href: data.download_url, download: "" }, "Download WAV"),
-      this.sendTo(data.result_id, this.info.name.toLowerCase())));
+      this.sendTo(data.result_id)));
   }
 }
 
@@ -293,8 +291,16 @@ class EqTool extends Tool {
     this.refreshResponse(0);
   }
 
+  // name: the preset the sliders show, or null once they are changed by hand.
   highlightPreset(name) {
+    this.preset = name;
     this.presetButtons.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.preset === name)));
+  }
+
+  // preset_name only names the result ("abc_radio filter.wav"); the
+  // slider values are what runs.
+  params() {
+    return this.preset ? { ...this.values, preset_name: this.preset } : { ...this.values };
   }
 }
 
@@ -422,7 +428,7 @@ class SeparationTool extends Tool {
       player.root.querySelector(".player-head").append(el("div", { class: "stem-controls" },
         entry.mute, entry.solo,
         el("a", { class: "btn btn-small", href: stem.download_url, download: "" }, "Download"),
-        this.sendTo(stem.result_id, stem.name, { small: true })));
+        this.sendTo(stem.result_id, { small: true })));
       this.players.push(player);
       return entry;
     });

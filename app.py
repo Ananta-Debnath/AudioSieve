@@ -7,6 +7,7 @@ upload a file once, then run any tool on it by id.
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 import uuid
@@ -106,6 +107,17 @@ EFFECTS = {
 # SEPARATION_MOCK=1: /process/separate skips the real separation and
 # returns copies of the input as the stems (a fallback, off by default).
 SEPARATION_MOCK_STEMS = separation.STEMS
+
+# A result's file name (downloads and SEND TO) says what made it:
+# "<source>_<what>.wav", e.g. "abc_radio filter.wav" (see output_name).
+# The EQ presets' "what":
+PRESET_OUTPUT_NAMES = {
+    "telephone": "telephone filter",
+    "radio": "radio filter",
+    "remove_rumble": "rumble filter",
+    "remove_hum_50hz": "hum filter 50 Hz",
+    "bass_boost": "bass boost",
+}
 
 # Backstage JSON is cached per run; bump this when its shape changes so
 # old caches are ignored.
@@ -315,6 +327,50 @@ def result_urls(result_id):
     }
 
 
+def output_label(run):
+    """What made an effect run's result, in a few words: "radio filter",
+    "lowpass filter", "eq", "circular reverb", "feedback echo"..."""
+    tool, params = run["tool"], run["params"]
+    if tool == "eq":
+        preset = run.get("preset") or params.get("preset")
+        if preset:
+            return PRESET_OUTPUT_NAMES.get(preset, preset.replace("_", " "))
+        mode = params.get("mode", "eq")
+        if mode == "hum":
+            return f"hum filter {params['hum_freq']:g} Hz"
+        filter_name = f"{params.get('filter_type')} filter"
+        return {"eq": "eq", "filter": filter_name, "both": f"eq + {filter_name}"}[mode]
+    if tool == "reverb":
+        return "circular reverb" if params.get("circular") else "reverb"
+    if tool == "echo":
+        return f"{params['mode']} echo"
+    return tool
+
+
+def output_name(run, stem=None):
+    """A result's file name, "<source>_<what made it>.wav": e.g.
+    "abc_radio filter.wav", or "abc_vocals.wav" for a stem. A result sent
+    on and processed again chains: "abc_radio filter_reverb.wav"."""
+    source = (run.get("source") or {}).get("filename") or "spectra"
+    base = source.rsplit(".", 1)[0] if "." in source else source
+    name = f"{base}_{stem or output_label(run)}.wav"
+    return re.sub(r'[\\/:*?"<>|]', "-", name)  # characters no OS allows in a file name
+
+
+def result_name(result_id):
+    """output_name of a result (an effect run's output or one stem), or
+    spectra_<id>.wav if no run knows it."""
+    run = run_registry().get(result_id)  # an effect's result id is its run id
+    if run is not None and run["tool"] != "separate":
+        return output_name(run)
+    stem_file = f"{result_id}.wav"
+    for run in run_registry().list():
+        for stem in run["outputs"].get("stems", []):
+            if stem["file"] == stem_file:
+                return output_name(run, stem["name"])
+    return f"spectra_{result_id[:8]}.wav"
+
+
 def eq_response_freqs(params):
     """Log-spaced grid over EQ_RESPONSE_RANGE_HZ. In hum mode the notch
     centres and -3 dB edges are added, so notches only a few Hz wide
@@ -474,12 +530,11 @@ def upload_vocals_demo():
 def upload_result(result_id):
     """Register a result (an effect's output or one stem) like any upload,
     so any tool, the one that made it too, can take it as its source:
-    SEND TO on the page. Optional "name": what to call it (".wav" is added)."""
+    SEND TO on the page. It keeps its download name (result_name)."""
     path = PROCESSED_DIR / f"{result_id}.wav"
     if not is_valid_id(result_id) or not path.exists():
         return error("This result is no longer on the server. Run the tool again.", 404)
-    name = str(request_params().get("name") or "").strip() or f"spectra_{result_id[:8]}"
-    return register_upload(f"{name}.wav", lambda dest: shutil.copyfile(path, dest))
+    return register_upload(result_name(result_id), lambda dest: shutil.copyfile(path, dest))
 
 
 @app.get("/upload/<file_id>")
@@ -561,8 +616,14 @@ def process_tool(tool):
     audio, sr = sf.read(str(src), dtype="float32")
     result_id = str(uuid.uuid4())
     extra = {}
+    run_extra = {}
 
     if tool == "eq":
+        # preset_name: the preset the page's sliders show, if any. It only
+        # names the result ("abc_radio filter.wav"); the values are what runs.
+        preset = params.pop("preset_name", None) or params.get("preset")
+        if preset in eq_filter.PRESETS:
+            run_extra["preset"] = preset
         try:
             params = eq_params(params)
             freq_bins, curve = eq_filter.build_curve(sr, params)
@@ -594,7 +655,7 @@ def process_tool(tool):
             "audio": f"{result_id}.wav",
             "spectrograms": {kind: f"{result_id}_{kind}.png" for kind in ("before", "after")},
         },
-        sr=sr, source=upload_info(file_id),
+        sr=sr, source=upload_info(file_id), **run_extra,
     )
 
     return jsonify({
@@ -621,11 +682,13 @@ def result(result_id):
     path = PROCESSED_DIR / f"{result_id}.wav"
     if not path.exists():
         abort(404)
+    download = request.args.get("download") == "1"
     return send_file(
         path,
         mimetype="audio/wav",
-        as_attachment=request.args.get("download") == "1",
-        download_name=f"spectra_{result_id[:8]}.wav",
+        as_attachment=download,
+        # Named only for downloads: players fetch this URL many times.
+        download_name=result_name(result_id) if download else None,
     )
 
 

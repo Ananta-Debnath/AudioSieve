@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import soundfile as sf
+from werkzeug.http import parse_options_header
 
 import runs
 import ui_config
@@ -392,33 +393,41 @@ def test_separation_mock_needs_a_known_file(client, monkeypatch):
 # SEND TO: a result becomes an upload, so any tool can process it next
 # ---------------------------------------------------------------------
 
-def send(client, result_id, **body):
-    res = client.post(f"/upload/result/{result_id}", json=body)
+def send(client, result_id):
+    res = client.post(f"/upload/result/{result_id}")
     assert res.status_code == 200, res.get_json()
     return res.get_json()
+
+
+def download_name(client, url):
+    res = client.get(url)
+    assert res.status_code == 200
+    disposition, options = parse_options_header(res.headers["Content-Disposition"])
+    assert disposition == "attachment"
+    return options["filename"]
 
 
 def test_an_effect_result_can_be_sent_to_any_tool(client, app_module):
     meta = upload(client, noise(SR), SR)
     run = client.post("/process/echo", json={"file_id": meta["file_id"], "delay_ms": 200}).get_json()
 
-    sent = send(client, run["result_id"], name="clip · echo + delay")
+    sent = send(client, run["result_id"])
     assert sent["file_id"] != meta["file_id"]
-    assert sent["filename"] == "clip · echo + delay.wav"
+    assert sent["filename"] == "clip_feedback echo.wav"  # named as its download
     assert sent["samplerate"] == SR and sent["channels"] == 1
     output = client.get(run["url"]).data
     assert client.get(sent["url"]).data == output  # the result itself, as an upload
     assert sent["duration"] == pytest.approx(sf.info(io.BytesIO(output)).duration)
 
-    # The tool it came from takes it again, and so does any other.
-    for tool in ("echo", "reverb"):
+    # The tool it came from takes it again, and so does any other; the
+    # names chain.
+    for tool, name in (("echo", "clip_feedback echo_feedback echo.wav"),
+                       ("reverb", "clip_feedback echo_reverb.wav")):
         res = client.post(f"/process/{tool}", json={"file_id": sent["file_id"]})
         assert res.status_code == 200, res.get_json()
         source = app_module.run_registry().get(res.get_json()["run_id"])["source"]
-        assert source["filename"] == "clip · echo + delay.wav"
-
-    # Without a name it is called like its download.
-    assert send(client, run["result_id"])["filename"] == f"spectra_{run['result_id'][:8]}.wav"
+        assert source["filename"] == "clip_feedback echo.wav"
+        assert download_name(client, res.get_json()["download_url"]) == name
 
 
 def test_a_stem_can_be_sent_to_any_tool(client, monkeypatch):
@@ -429,16 +438,69 @@ def test_a_stem_can_be_sent_to_any_tool(client, monkeypatch):
     for stem in data["stems"]:
         assert stem["url"].endswith(stem["result_id"])
     stem = data["stems"][0]
-    sent = send(client, stem["result_id"], name=f"clip · {stem['name']}")
-    assert sent["filename"] == f"clip · {stem['name']}.wav" and sent["channels"] == 2
+    sent = send(client, stem["result_id"])
+    assert sent["filename"] == f"clip_{stem['name']}.wav" and sent["channels"] == 2
     assert client.get(sent["url"]).data == client.get(stem["url"]).data
     res = client.post("/process/flanger", json={"file_id": sent["file_id"]})
     assert res.status_code == 200, res.get_json()
 
 
+# ---------------------------------------------------------------------
+# Download names: "<source>_<what made it>.wav"
+# ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("tool, params, name", [
+    # The page sends the preset its sliders show as preset_name.
+    ("eq", {"preset_name": "radio", **eq_filter.PRESETS["radio"]}, "abc_radio filter.wav"),
+    ("eq", {"preset": "telephone"}, "abc_telephone filter.wav"),
+    ("eq", {"preset_name": "nope", "mode": "eq"}, "abc_eq.wav"),
+    ("eq", {"mode": "eq", "band_0_gain_db": 6}, "abc_eq.wav"),
+    ("eq", {"mode": "filter", "filter_type": "lowpass", "cutoff": 1000}, "abc_lowpass filter.wav"),
+    ("eq", {"mode": "both", "filter_type": "bandstop", "low_cutoff": 300, "high_cutoff": 900},
+     "abc_eq + bandstop filter.wav"),
+    ("eq", {"mode": "hum", "hum_freq": 60}, "abc_hum filter 60 Hz.wav"),
+    ("reverb", {}, "abc_reverb.wav"),
+    ("reverb", {"circular": "true"}, "abc_circular reverb.wav"),
+    ("echo", {"mode": "feedforward"}, "abc_feedforward echo.wav"),
+    ("flanger", {}, "abc_flanger.wav"),
+])
+def test_downloads_say_what_made_them(client, app_module, tool, params, name):
+    meta = upload(client, noise(44100), 44100, name="abc.wav")  # radio goes up to 5 kHz
+    res = client.post(f"/process/{tool}", json={"file_id": meta["file_id"], **params})
+    assert res.status_code == 200, res.get_json()
+    data = res.get_json()
+    assert download_name(client, data["download_url"]) == name
+    # The preset name only names the file: the run's params are what ran.
+    run = app_module.run_registry().get(data["run_id"])
+    if params.get("preset_name") == "radio":
+        assert run["preset"] == "radio" and run["params"]["filter_type"] == "bandpass"
+    # Playing it is not a download.
+    assert "attachment" not in client.get(data["url"]).headers.get("Content-Disposition", "")
+
+
+def test_every_eq_preset_has_a_download_name(app_module):
+    assert set(app_module.PRESET_OUTPUT_NAMES) == set(eq_filter.PRESETS)
+
+
+def test_stem_downloads_are_named_after_the_stem(client, monkeypatch):
+    monkeypatch.setenv("SEPARATION_MOCK", "1")
+    meta = upload(client, noise((SR, 2)), SR, name="Song: live?.wav")
+    data = client.post("/process/separate", json={"file_id": meta["file_id"]}).get_json()
+    names = [download_name(client, stem["download_url"]) for stem in data["stems"]]
+    # Characters a file name can't have are replaced.
+    assert names == [f"Song- live-_{name}.wav" for name in separation.STEMS]
+
+
+def test_a_result_without_a_run_keeps_the_old_name(client, app_module):
+    result_id = "12345678-0000-4000-8000-000000000000"
+    sf.write(str(app_module.PROCESSED_DIR / f"{result_id}.wav"), noise(SR), SR)
+    assert download_name(client, f"/result/{result_id}?download=1") == "spectra_12345678.wav"
+    assert send(client, result_id)["filename"] == "spectra_12345678.wav"
+
+
 @pytest.mark.parametrize("result_id", ["nope", "00000000-0000-0000-0000-000000000000"])
 def test_sending_an_unknown_result_is_a_clear_404(client, result_id):
-    res = client.post(f"/upload/result/{result_id}", json={"name": "x"})
+    res = client.post(f"/upload/result/{result_id}")
     assert res.status_code == 404
     assert "no longer on the server" in res.get_json()["error"]
 
