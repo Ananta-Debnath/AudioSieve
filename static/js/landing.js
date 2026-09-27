@@ -9,8 +9,8 @@ import { el, storageGet, storageSet } from "./util.js";
 const CONFIG = {
   appName: "SPECTRA",
   tagline: "Interactive audio signal processing.",
-  teamName: "TEAM NAME",                          // placeholder, fill in
-  githubUrl: "https://github.com/OWNER/REPO",     // placeholder, fill in
+  teamName: "THE RESONATORS",                          
+  githubUrl: "https://github.com/Ananta-Debnath/AudioSieve.git",     
   // A slide with a preview clip lasts as long as the clip (the asset
   // script makes them about 6 s), so the audio fills it; this is for the rest.
   slideMs: 6000,
