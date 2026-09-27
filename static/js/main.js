@@ -65,6 +65,14 @@ const app = {
   openBackstage(runId) {
     this.showView("backstage", { runId });
   },
+
+  // SEND TO under a result: meta (a registered upload) becomes that
+  // tool's source, and its tab opens (it may be the tab already open).
+  sendTo(toolId, meta) {
+    this.tools.get(toolId).source.receive(meta);
+    this.showView(toolId);
+    document.getElementById(`tab-${toolId}`).focus();
+  },
 };
 
 app.tools = createTools(app);

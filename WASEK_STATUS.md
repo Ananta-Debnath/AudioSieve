@@ -56,9 +56,12 @@ Files: [templates/index.html](templates/index.html),
 - Live system-response plot for every effect (debounced, stale responses dropped). The
   flanger's plot animates the sweep, with play/pause.
 - Output: ORIGINAL and PROCESSED WaveSurfer players (one plays at a time, Space toggles
-  the last used), DOWNLOAD WAV, → BACKSTAGE.
-- Separation: ORIGINAL player plus one row per stem with play, MUTE, SOLO, DOWNLOAD and a
-  synced PLAY ALL. Mute/solo only change playback volume.
+  the last used), DOWNLOAD WAV, SEND TO, → BACKSTAGE.
+- Separation: ORIGINAL player plus one row per stem with play, MUTE, SOLO, DOWNLOAD, SEND TO
+  and a synced PLAY ALL. Mute/solo only change playback volume.
+- SEND TO (added after stage 06): a menu of all five tools, the result's own tool included.
+  The result becomes that tool's source and its tab opens, without a download and
+  re-upload. It is named after its chain, e.g. `demo · reverb · echo + delay.wav`.
 - HOW IT WORKS drawer per tool (equation, a short explanation, one line per parameter).
   It is non-modal and closes with ✕, Esc or the button.
 - Placeholder demo track: [static/demo/demo.wav](static/demo/demo.wav), made by
@@ -93,6 +96,7 @@ API responses only gained fields in stage 04; nothing was renamed or removed.
 | --- | --- |
 | `POST /upload` | Returns `file_id`, filename, duration, sample rate, channels and a playable `url` |
 | `POST /upload/demo` | Registers `static/demo/demo.wav` like a normal upload |
+| `POST /upload/result/<result_id>` | SEND TO: registers a result or stem (stems carry a `result_id`) like a normal upload; optional JSON `name` |
 | `GET /upload/<id>` and `/upload/<id>/waveform` | The uploaded file, and its min/max envelope for the ORIGINAL player |
 | `POST /process/<eq\|reverb\|echo\|flanger>` | Runs the effect. Returns `run_id`, result and download URLs, spectrograms, waveform peaks and (for EQ) the curve |
 | `POST /process/separate` | 501 until the merge; the contract (below) with `SEPARATION_MOCK=1` |

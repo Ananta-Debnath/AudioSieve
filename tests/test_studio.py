@@ -389,6 +389,61 @@ def test_separation_mock_needs_a_known_file(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------
+# SEND TO: a result becomes an upload, so any tool can process it next
+# ---------------------------------------------------------------------
+
+def send(client, result_id, **body):
+    res = client.post(f"/upload/result/{result_id}", json=body)
+    assert res.status_code == 200, res.get_json()
+    return res.get_json()
+
+
+def test_an_effect_result_can_be_sent_to_any_tool(client, app_module):
+    meta = upload(client, noise(SR), SR)
+    run = client.post("/process/echo", json={"file_id": meta["file_id"], "delay_ms": 200}).get_json()
+
+    sent = send(client, run["result_id"], name="clip · echo + delay")
+    assert sent["file_id"] != meta["file_id"]
+    assert sent["filename"] == "clip · echo + delay.wav"
+    assert sent["samplerate"] == SR and sent["channels"] == 1
+    output = client.get(run["url"]).data
+    assert client.get(sent["url"]).data == output  # the result itself, as an upload
+    assert sent["duration"] == pytest.approx(sf.info(io.BytesIO(output)).duration)
+
+    # The tool it came from takes it again, and so does any other.
+    for tool in ("echo", "reverb"):
+        res = client.post(f"/process/{tool}", json={"file_id": sent["file_id"]})
+        assert res.status_code == 200, res.get_json()
+        source = app_module.run_registry().get(res.get_json()["run_id"])["source"]
+        assert source["filename"] == "clip · echo + delay.wav"
+
+    # Without a name it is called like its download.
+    assert send(client, run["result_id"])["filename"] == f"spectra_{run['result_id'][:8]}.wav"
+
+
+def test_a_stem_can_be_sent_to_any_tool(client, monkeypatch):
+    monkeypatch.setenv("SEPARATION_MOCK", "1")
+    meta = upload(client, noise((SR, 2)), SR)
+    data = client.post("/process/separate", json={"file_id": meta["file_id"]}).get_json()
+
+    for stem in data["stems"]:
+        assert stem["url"].endswith(stem["result_id"])
+    stem = data["stems"][0]
+    sent = send(client, stem["result_id"], name=f"clip · {stem['name']}")
+    assert sent["filename"] == f"clip · {stem['name']}.wav" and sent["channels"] == 2
+    assert client.get(sent["url"]).data == client.get(stem["url"]).data
+    res = client.post("/process/flanger", json={"file_id": sent["file_id"]})
+    assert res.status_code == 200, res.get_json()
+
+
+@pytest.mark.parametrize("result_id", ["nope", "00000000-0000-0000-0000-000000000000"])
+def test_sending_an_unknown_result_is_a_clear_404(client, result_id):
+    res = client.post(f"/upload/result/{result_id}", json={"name": "x"})
+    assert res.status_code == 404
+    assert "no longer on the server" in res.get_json()["error"]
+
+
+# ---------------------------------------------------------------------
 # The page: slider ranges come from the effects' PARAMS
 # ---------------------------------------------------------------------
 

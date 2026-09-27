@@ -659,6 +659,13 @@ p {
   padding: 12px 14px;
   border: var(--border);
   background: var(--bg);
+  transition: border-color 600ms;
+}
+
+/* A result just sent here: outlined at once, then fades back. */
+.source-loaded.is-received {
+  border-color: var(--accent);
+  transition: none;
 }
 
 .source-text {
@@ -959,6 +966,74 @@ p {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* SEND TO menu under a result (sendto.js) */
+.menu-wrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 15; /* over the waveforms, under the drawer */
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 16rem;
+  max-width: calc(100vw - 2 * var(--gutter));
+  border: 2px solid var(--fg-dim);
+  background: var(--panel);
+}
+
+/* Set by sendto.js when the menu would run off the right edge. */
+.menu.menu-right {
+  left: auto;
+  right: 0;
+}
+
+.menu-label {
+  padding: 8px 12px 6px;
+  border-bottom: var(--border);
+}
+
+.menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  font: 500 13px/1.2 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  outline: none;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.menu-item:hover > span,
+.menu-item:focus-visible > span {
+  color: inherit;
+}
+
+.menu-here {
+  margin-left: auto;
+  padding-left: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.menu-msg {
+  margin: 8px;
 }
 
 /* ------------------------------------------------------------------ */

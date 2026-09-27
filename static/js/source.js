@@ -1,6 +1,7 @@
 // The source box inside every tool: each tool has its own file. Upload
 // (drag-and-drop or browse), USE SAME FILE (the last file loaded in any
 // tool, reused by file_id without re-uploading) or the tool's demo track.
+// SEND TO under any tool's result loads that result here too (receive).
 import { CONFIG } from "./config.js";
 import { el, fmtTime, requestJSON } from "./util.js";
 
@@ -139,6 +140,17 @@ export class SourceBox {
     this.showLoaded();
     this.showSameButton();
     this.onLoad(meta);
+  }
+
+  // A result sent here from a tool's output (see sendto.js): already on
+  // the server, so it only needs loading. Briefly outlined so it's seen.
+  receive(meta) {
+    this.error.hidden = true;
+    setLastFile(meta);
+    this.load(meta);
+    this.loaded.classList.add("is-received");
+    clearTimeout(this.receivedTimer);
+    this.receivedTimer = setTimeout(() => this.loaded.classList.remove("is-received"), 1500);
   }
 
   async upload(file) {

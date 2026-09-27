@@ -404,8 +404,9 @@ def lab():
 def register_upload(filename, save):
     """Validate and register one audio file; save(path) writes it to path.
 
-    Shared by /upload and /upload/demo, so the demo track goes through
-    exactly the same checks and gets an ordinary file_id.
+    Shared by /upload, /upload/demo and /upload/result, so the demo track
+    and a sent-on result go through exactly the same checks and get an
+    ordinary file_id.
     """
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in ALLOWED_EXTENSIONS:
@@ -469,6 +470,18 @@ def upload_vocals_demo():
     return register_upload(VOCALS_DEMO_NAME, lambda path: shutil.copyfile(VOCALS_DEMO_PATH, path))
 
 
+@app.post("/upload/result/<result_id>")
+def upload_result(result_id):
+    """Register a result (an effect's output or one stem) like any upload,
+    so any tool, the one that made it too, can take it as its source:
+    SEND TO on the page. Optional "name": what to call it (".wav" is added)."""
+    path = PROCESSED_DIR / f"{result_id}.wav"
+    if not is_valid_id(result_id) or not path.exists():
+        return error("This result is no longer on the server. Run the tool again.", 404)
+    name = str(request_params().get("name") or "").strip() or f"spectra_{result_id[:8]}"
+    return register_upload(f"{name}.wav", lambda dest: shutil.copyfile(path, dest))
+
+
 @app.get("/upload/<file_id>")
 def uploaded_audio(file_id):
     """The uploaded file itself, for the ORIGINAL player."""
@@ -512,7 +525,8 @@ def process_separate():
     for name, stem in stems.items():
         stem_id = str(uuid.uuid4())
         write_result(stem_id, stem, sr)
-        saved.append({"name": name, "file": f"{stem_id}.wav", "audio": stem, **result_urls(stem_id)})
+        saved.append({"name": name, "id": stem_id, "file": f"{stem_id}.wav", "audio": stem,
+                      **result_urls(stem_id)})
 
     run_registry().add(
         run_id, "separate", {"mock": mock}, file_id,
@@ -523,8 +537,8 @@ def process_separate():
         "run_id": run_id,
         "input_url": url_for("uploaded_audio", file_id=file_id),
         "stems": [
-            {"name": s["name"], "url": s["url"], "download_url": s["download_url"],
-             **waveform_json(s["audio"], sr)}
+            {"name": s["name"], "result_id": s["id"], "url": s["url"],
+             "download_url": s["download_url"], **waveform_json(s["audio"], sr)}
             for s in saved
         ],
     })

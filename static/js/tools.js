@@ -5,6 +5,7 @@ import { CONFIG, toolInfo } from "./config.js";
 import { Segmented, Slider, field } from "./controls.js";
 import { Player, StemGroup } from "./player.js";
 import { ResponsePlot, responseQuery } from "./responses.js";
+import { SendTo } from "./sendto.js";
 import { DEFAULT_DEMO, SourceBox } from "./source.js";
 import { el, fmtClock, requestJSON } from "./util.js";
 
@@ -169,6 +170,13 @@ class Tool {
     this.output.replaceChildren(el("p", { class: "empty" }, "No output yet. Load a track and press RUN."));
   }
 
+  // SEND TO for one result; it is called "<source name> · <madeBy>", so a
+  // chain reads "demo · reverb · echo + delay".
+  sendTo(resultId, madeBy, { small = false } = {}) {
+    const source = this.source.meta.filename.replace(/\.[^.]*$/, "");
+    return new SendTo(this.app, { resultId, name: `${source} · ${madeBy}`, fromTool: this.id, small }).root;
+  }
+
   outputActions(data, seconds, ...extra) {
     return el("div", { class: "output-actions" },
       ...extra,
@@ -188,7 +196,8 @@ class Tool {
       new Player(wrap, { label: "Processed", variant: "processed", source: { url: data.url, ...waves.after } }),
     ];
     wrap.append(this.outputActions(data, seconds,
-      el("a", { class: "btn btn-accent", href: data.download_url, download: "" }, "Download WAV")));
+      el("a", { class: "btn btn-accent", href: data.download_url, download: "" }, "Download WAV"),
+      this.sendTo(data.result_id, this.info.name.toLowerCase())));
   }
 }
 
@@ -412,7 +421,8 @@ class SeparationTool extends Tool {
       }, "Solo");
       player.root.querySelector(".player-head").append(el("div", { class: "stem-controls" },
         entry.mute, entry.solo,
-        el("a", { class: "btn btn-small", href: stem.download_url, download: "" }, "Download")));
+        el("a", { class: "btn btn-small", href: stem.download_url, download: "" }, "Download"),
+        this.sendTo(stem.result_id, stem.name, { small: true })));
       this.players.push(player);
       return entry;
     });
