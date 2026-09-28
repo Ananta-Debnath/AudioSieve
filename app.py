@@ -40,8 +40,11 @@ PROCESSED_DIR = BASE_DIR / "processed"
 DEMO_PATH = BASE_DIR / "static" / "demo" / "demo.wav"
 # Separation's demo is a song with vocals (the placeholder above has
 # none): 30 s of Karissa Hobbs' "Let's Go Fishin'" (static/demo/CREDITS.txt).
-VOCALS_DEMO_PATH = BASE_DIR / "static" / "demo" / "demo_vocals.flac"
-VOCALS_DEMO_NAME = "Let's Go Fishin' - Karissa Hobbs.flac"
+# VOCALS_DEMO_PATH = BASE_DIR / "static" / "demo" / "demo_vocals.flac"
+# VOCALS_DEMO_NAME = "Let's Go Fishin' - Karissa Hobbs.flac"
+
+VOCALS_DEMO_PATH = BASE_DIR / "static" / "demo" / "trimmed.wav"
+VOCALS_DEMO_NAME = "Poran Jai Jolia Re Title Track - Dev Subhashree Jeet Gannguli SVF Kuda 4 O.wav"
 # Landing page previews (static files; see scripts/make_landing_assets.py).
 # Separation is "separation" here and in /lab#separation links.
 LANDING_DIR = BASE_DIR / "static" / "landing"
